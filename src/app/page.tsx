@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 const TONE: Record<string, string> = { chat: "闲聊", work: "工作", academic: "学术", "?": "未知" };
 const METHOD: Record<string, string> = {
-  click: "点击", right_option: "右 Option", ctrl_return: "Ctrl+Return", tab: "Tab（旧版）",
+  click: "点击", ctrl_j: "Ctrl+J", ctrl_return: "Ctrl+Return（旧版）", right_option: "右 Option（旧版）", tab: "Tab（旧版）",
 };
 const LEARNING: Record<string, string> = {
   gloss_shown: "词义行展示", dict_opened: "打开词典", new_word_shown: "生词展示", new_word_clicked: "生词点击",

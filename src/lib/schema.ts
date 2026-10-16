@@ -6,8 +6,8 @@
 // typed text, a translation, a URL or a key.
 
 export const TONES = ["chat", "work", "academic"] as const;
-// "tab" is kept so batches from builds that still accepted on Tab count.
-const METHODS = ["click", "ctrl_return", "right_option", "tab"];
+// Older values are kept so batches from earlier builds (Tab, Ctrl+Return, right Option) still count.
+const METHODS = ["click", "ctrl_j", "ctrl_return", "right_option", "tab"];
 
 const isTone = (v: unknown) => typeof v === "string" && (TONES as readonly string[]).includes(v);
 const code = (re: RegExp) => (v: unknown) => typeof v === "string" && re.test(v);
