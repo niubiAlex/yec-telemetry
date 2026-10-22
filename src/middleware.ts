@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { basicPassword, safeEqual } from "@/lib/auth";
 
-// The dashboard is behind Basic auth. Ingest is not matched here.
-export const config = { matcher: ["/((?!api/events|_next/static|favicon.ico).*)"] };
+// The dashboard is behind Basic auth. The client endpoints (ingest, remote
+// config, update manifests, installer downloads) and the token-checked admin
+// endpoint are not matched here.
+export const config = {
+  matcher: ["/((?!api/events|api/config|api/update|api/admin|dl/|_next/static|favicon.ico).*)"],
+};
 
 export function middleware(req: NextRequest) {
   const password = process.env.DASHBOARD_PASSWORD;

@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_ts_name ON events (ts, name);
 CREATE INDEX IF NOT EXISTS events_device ON events (device_id);
 CREATE INDEX IF NOT EXISTS batches_device ON batches (device_id, received_at);
+CREATE TABLE IF NOT EXISTS remote_docs (
+  name        text PRIMARY KEY,
+  body        jsonb NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 let ready: Promise<void> | undefined;
@@ -41,6 +46,22 @@ export function ensureSchema(): Promise<void> {
     ready.catch(() => { ready = undefined; }); // retry on the next request
   }
   return ready;
+}
+
+/** A remote config or update manifest, as last published; null if never. */
+export async function getDoc(name: string): Promise<{ body: unknown; updatedAt: Date } | null> {
+  await ensureSchema();
+  const r = await db().query("SELECT body, updated_at FROM remote_docs WHERE name = $1", [name]);
+  return r.rowCount ? { body: r.rows[0].body, updatedAt: r.rows[0].updated_at } : null;
+}
+
+export async function putDoc(name: string, body: unknown): Promise<void> {
+  await ensureSchema();
+  await db().query(
+    `INSERT INTO remote_docs (name, body) VALUES ($1, $2::jsonb)
+     ON CONFLICT (name) DO UPDATE SET body = EXCLUDED.body, updated_at = now()`,
+    [name, JSON.stringify(body)],
+  );
 }
 
 /**

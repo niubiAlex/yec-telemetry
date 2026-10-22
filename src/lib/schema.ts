@@ -8,6 +8,10 @@
 export const TONES = ["chat", "work", "academic"] as const;
 // Older values are kept so batches from earlier builds (Tab, Ctrl+Return, right Option) still count.
 const METHODS = ["click", "ctrl_j", "ctrl_return", "right_option", "tab"];
+// Where 新手引导 was opened: on its own the first time, the input method menu
+// (Mac) or the 中/英 indicator's menu (Windows), the tray menu, Settings, or
+// the command line.
+const ONBOARDING_SOURCES = ["first_run", "menu", "indicator", "tray", "settings", "command_line"];
 
 const isTone = (v: unknown) => typeof v === "string" && (TONES as readonly string[]).includes(v);
 const code = (re: RegExp) => (v: unknown) => typeof v === "string" && re.test(v);
@@ -32,6 +36,8 @@ const PROP: Record<string, Check> = {
   level: code(/^[A-Za-z0-9_]{1,12}$/),
   index: int(0, 50),
   key: code(/^[a-z0-9_.]{1,40}$/),
+  source: (v) => typeof v === "string" && ONBOARDING_SOURCES.includes(v),
+  page: int(1, 20),
 };
 
 /** Event name -> the props kept for it. */
@@ -60,6 +66,10 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   radical_tab_clicked: [],
   candidate_index_chosen: ["index"],
   setting_changed: ["key"],
+  onboarding_shown: ["source"],
+  // `page`: the last page reached, 1-6.
+  onboarding_completed: ["page"],
+  onboarding_skipped: ["page"],
 };
 
 export const MAX_BODY_BYTES = 256 * 1024;

@@ -35,6 +35,23 @@ describe("parseBatch", () => {
     expect(r.batch.events.map((e) => e.props)).toEqual([{ tone: "chat" }, {}, { ms: 900, ok: false }, {}]);
   });
 
+  it("keeps the onboarding events' source and page", () => {
+    const r = parseBatch(envelope([
+      { name: "onboarding_shown", ts: NOW, props: { source: "first_run" } },
+      { name: "onboarding_shown", ts: NOW, props: { source: "indicator" } },
+      { name: "onboarding_skipped", ts: NOW, props: { page: 2 } },
+      { name: "onboarding_completed", ts: NOW, props: { page: 6 } },
+      { name: "onboarding_shown", ts: NOW, props: { source: "a link in a chat" } },
+      { name: "onboarding_skipped", ts: NOW, props: { page: 0, source: "menu" } },
+      { name: "onboarding_skipped", ts: NOW, props: { page: 2.5 } },
+    ]), NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.batch.events.map((e) => e.props)).toEqual([
+      { source: "first_run" }, { source: "indicator" }, { page: 2 }, { page: 6 }, {}, {}, {},
+    ]);
+  });
+
   it("skips unknown events but keeps the batch", () => {
     const r = parseBatch(envelope([{ name: "typed_text", ts: NOW, props: {} }, { name: "install", ts: NOW }]), NOW);
     expect(r.ok && r.batch.events.map((e) => e.name)).toEqual(["install"]);
