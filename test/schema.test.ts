@@ -52,6 +52,23 @@ describe("parseBatch", () => {
     ]);
   });
 
+  it("keeps 导入词库 counts and drops anything that could hold a word", () => {
+    const r = parseBatch(envelope([
+      { name: "dict_import", ts: NOW,
+        props: { dict_source: "apple", format: "apple_lexicon", found: 2827, added: 652, entry: "onboarding" } },
+      { name: "dict_import_removed", ts: NOW, props: { dict_source: "all", removed: 652 } },
+      { name: "dict_import", ts: NOW,
+        props: { dict_source: "王鹏飞", format: "docx", found: -1, added: 1.5, entry: "chat", word: "鹏飞" } },
+    ]), NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.batch.events.map((e) => e.props)).toEqual([
+      { dict_source: "apple", format: "apple_lexicon", found: 2827, added: 652, entry: "onboarding" },
+      { dict_source: "all", removed: 652 },
+      {},
+    ]);
+  });
+
   it("skips unknown events but keeps the batch", () => {
     const r = parseBatch(envelope([{ name: "typed_text", ts: NOW, props: {} }, { name: "install", ts: NOW }]), NOW);
     expect(r.ok && r.batch.events.map((e) => e.name)).toEqual(["install"]);

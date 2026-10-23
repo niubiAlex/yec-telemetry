@@ -12,6 +12,10 @@ const METHODS = ["click", "ctrl_j", "ctrl_return", "right_option", "tab"];
 // (Mac) or the 中/英 indicator's menu (Windows), the tray menu, Settings, or
 // the command line.
 const ONBOARDING_SOURCES = ["first_run", "menu", "indicator", "tray", "settings", "command_line"];
+// 导入词库: which input method the words came from, the file format, and
+// where the import started. Never the words.
+const DICT_SOURCES = ["apple", "sogou", "wetype", "mspy", "other"];
+const DICT_FORMATS = ["apple_lexicon", "scel", "sogou_bin", "mspy_udp", "mspy_udl", "txt"];
 
 const isTone = (v: unknown) => typeof v === "string" && (TONES as readonly string[]).includes(v);
 const code = (re: RegExp) => (v: unknown) => typeof v === "string" && re.test(v);
@@ -38,6 +42,13 @@ const PROP: Record<string, Check> = {
   key: code(/^[a-z0-9_.]{1,40}$/),
   source: (v) => typeof v === "string" && ONBOARDING_SOURCES.includes(v),
   page: int(1, 20),
+  // `all` only on dict_import_removed, for 全部移除.
+  dict_source: (v) => typeof v === "string" && (DICT_SOURCES.includes(v) || v === "all"),
+  format: (v) => typeof v === "string" && DICT_FORMATS.includes(v),
+  found: int(0, 1_000_000),
+  added: int(0, 1_000_000),
+  removed: int(0, 1_000_000),
+  entry: (v) => v === "settings" || v === "onboarding",
 };
 
 /** Event name -> the props kept for it. */
@@ -70,6 +81,8 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   // `page`: the last page reached, 1-6.
   onboarding_completed: ["page"],
   onboarding_skipped: ["page"],
+  dict_import: ["dict_source", "format", "found", "added", "entry"],
+  dict_import_removed: ["dict_source", "removed"],
 };
 
 export const MAX_BODY_BYTES = 256 * 1024;
