@@ -69,6 +69,63 @@ describe("parseBatch", () => {
     ]);
   });
 
+  it("keeps the beta plan's batch-level fields and drops invalid ones without failing the batch", () => {
+    const ok = parseBatch({ ...envelope([{ name: "install", ts: NOW }]), platform: "windows", channel: "beta",
+      english_level: "B1", onboarded: true, install_date: "2026-10-12", improve_on: false }, NOW);
+    expect(ok.ok && ok.batch.meta).toEqual({ platform: "windows", channel: "beta", englishLevel: "B1", onboarded: true,
+      installDate: "2026-10-12", improveOn: false });
+    const bad = parseBatch({ ...envelope([{ name: "install", ts: NOW }]), platform: "linux", channel: "Beta 1",
+      english_level: "D9", onboarded: "yes", install_date: "2026-02-30", improve_on: 1 }, NOW);
+    expect(bad.ok && bad.batch.meta).toEqual({ platform: null, channel: null, englishLevel: null, onboarded: null,
+      installDate: null, improveOn: null });
+    const old = parseBatch(envelope([{ name: "install", ts: NOW }]), NOW);
+    expect(old.ok && old.batch.meta.platform).toBe(null);
+  });
+
+  it("accepts the beta plan's new events and fields", () => {
+    const card = "11111111-2222-4333-8444-555555555555";
+    const r = parseBatch(envelope([
+      { name: "input_time_daily", ts: NOW, props: { day: "2026-10-15", commits: 120, chars: 900, chars_en_typed: 40,
+        chars_en_card: 30, away_30m: 1, youdao_typing_min: 55, away_min: 20, zh_only_typing_min: 40, switch_away: 3,
+        switch_back: 2, typing_min_chat: 30, typing_min_code: 25, text: "我们" } },
+      { name: "card_shown", ts: NOW, props: { tone: "work", card_id: card, app_category: "mail", len_bucket: "m", trigger: "auto" } },
+      { name: "card_closed", ts: NOW, props: { card_id: card, tone: "work", reason: "x_button", app_category: "mail" } },
+      { name: "ime_deactivated", ts: NOW, props: { to_kind: "latin_layout", recent_card_id: card, struggle: true, recent_backspaces: 12 } },
+      { name: "typing_stats", ts: NOW, props: { app_category: "chat", commits: 50, first_hit: 41, keys: 300, chars: 120 } },
+      { name: "translation_toggled", ts: NOW, props: { feature: "translate", scope: "app", on: false, app_category: "code" } },
+      { name: "word_reviewed", ts: NOW, props: { entry: "recall", result: "known" } },
+      { name: "ime_restarted", ts: NOW, props: { kind: "crash", uptime_min: 300 } },
+      { name: "level_setting", ts: NOW, props: { kind: "english", level: "B2" } },
+      { name: "dict_opened", ts: NOW, props: { entry: "gloss" } },
+    ]), NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.batch.dropped).toBe(0);
+    const [daily, shown, closed, away, typing, toggled, reviewed, restarted, level, dict] = r.batch.events.map((e) => e.props);
+    expect(daily).not.toHaveProperty("text");
+    expect(daily).toMatchObject({ day: "2026-10-15", commits: 120, away_30m: 1, typing_min_code: 25 });
+    expect(shown).toEqual({ tone: "work", card_id: card, app_category: "mail", len_bucket: "m", trigger: "auto" });
+    expect(closed).toEqual({ card_id: card, tone: "work", reason: "x_button", app_category: "mail" });
+    expect(away).toEqual({ to_kind: "latin_layout", recent_card_id: card, struggle: true, recent_backspaces: 12 });
+    expect(typing).toEqual({ app_category: "chat", commits: 50, first_hit: 41, keys: 300, chars: 120 });
+    expect(toggled).toEqual({ feature: "translate", scope: "app", on: false, app_category: "code" });
+    expect(reviewed).toEqual({ entry: "recall", result: "known" });
+    expect(restarted).toEqual({ kind: "crash", uptime_min: 300 });
+    expect(level).toEqual({ kind: "english", level: "B2" });
+    expect(dict).toEqual({ entry: "gloss" });
+  });
+
+  it("checks event-specific values for shared prop names", () => {
+    const r = parseBatch(envelope([
+      { name: "ime_restarted", ts: NOW, props: { kind: "english" } },
+      { name: "level_setting", ts: NOW, props: { kind: "crash", level: "B1" } },
+      { name: "card_closed", ts: NOW, props: { reason: "too_long", card_id: "not-a-uuid" } },
+      { name: "input_time_daily", ts: NOW, props: { day: "2026-13-01", commits: -1, youdao_typing_min: 2000 } },
+      { name: "dict_import", ts: NOW, props: { entry: "card" } },
+    ]), NOW);
+    expect(r.ok && r.batch.events.map((e) => e.props)).toEqual([{}, { level: "B1" }, {}, {}, {}]);
+  });
+
   it("skips unknown events but keeps the batch", () => {
     const r = parseBatch(envelope([{ name: "typed_text", ts: NOW, props: {} }, { name: "install", ts: NOW }]), NOW);
     expect(r.ok && r.batch.events.map((e) => e.name)).toEqual(["install"]);

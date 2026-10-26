@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_ts_name ON events (ts, name);
 CREATE INDEX IF NOT EXISTS events_device ON events (device_id);
 CREATE INDEX IF NOT EXISTS batches_device ON batches (device_id, received_at);
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS platform text;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS channel text;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS english_level text;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS onboarded boolean;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS install_date date;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS improve_on boolean;
+CREATE INDEX IF NOT EXISTS events_name_ts ON events (name, ts);
 CREATE TABLE IF NOT EXISTS remote_docs (
   name        text PRIMARY KEY,
   body        jsonb NOT NULL,
@@ -74,9 +81,11 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
   try {
     await client.query("BEGIN");
     const inserted = await client.query(
-      `INSERT INTO batches (batch_id, device_id, app_version, os_version)
-       VALUES ($1, $2, $3, $4) ON CONFLICT (batch_id) DO NOTHING`,
-      [b.batchId, b.deviceId, b.appVersion, b.osVersion],
+      `INSERT INTO batches (batch_id, device_id, app_version, os_version,
+         platform, channel, english_level, onboarded, install_date, improve_on)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (batch_id) DO NOTHING`,
+      [b.batchId, b.deviceId, b.appVersion, b.osVersion, b.meta.platform, b.meta.channel,
+        b.meta.englishLevel, b.meta.onboarded, b.meta.installDate, b.meta.improveOn],
     );
     if (inserted.rowCount === 0) {
       await client.query("ROLLBACK");

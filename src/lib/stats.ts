@@ -1,130 +1,563 @@
 import { db, ensureSchema } from "./db";
 
-// Days are counted in Beijing time: that is when the users' days start.
+// Metrics follow docs/beta-metrics-plan.md. Days are Beijing days; day 0 is
+// the install day; weeks start Monday 00:00 Beijing time.
 const DAY = `(ts AT TIME ZONE 'Asia/Shanghai')::date`;
+const TODAY = `(now() AT TIME ZONE 'Asia/Shanghai')::date`;
 const SINCE = (days: number) => `ts >= now() - interval '${days} days'`;
+const OK = `coalesce((props->>'ok')::boolean, true)`;
+const LEARNING_EVENTS = [
+  "new_word_clicked", "gloss_clicked", "recall_clicked", "word_added_to_book",
+  "dict_opened", "learning_dashboard_opened", "word_marked_known", "word_reviewed",
+] as const;
+const LEARNING_IN = LEARNING_EVENTS.map((n) => `'${n}'`).join(",");
+
+export type Platform = "mac" | "windows";
+export interface Filters { platform: Platform | null; strict: boolean }
+
+// Clients before the beta plan send no `platform`; Windows builds send
+// os_version "windows 10.0.x", so that is used as the fallback.
+const DEVICE_PLATFORM = `
+  SELECT DISTINCT ON (device_id) device_id,
+    coalesce(platform, CASE WHEN os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END) AS platform
+  FROM batches ORDER BY device_id, received_at DESC`;
 
 async function q<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   return (await db().query(sql, params)).rows as T[];
 }
 
-export interface Overview {
-  devices: number; installs: number; active1: number; active7: number; active30: number; events: number;
-}
-export interface Day {
-  day: string; active: number; installs: number; shown: number; replaced: number; dismissed: number;
-  gloss: number; p50: number | null;
-}
-export interface ToneRow {
-  tone: string; shown: number; replaced: number; failed: number; dismissed: number; undone: number;
-}
 export interface Count { label: string; n: number }
-export interface Latency { n: number; errors: number; p50: number | null; p90: number | null; p95: number | null }
-export interface AppRow { bundle_id: string; app_name: string | null; devices: number; n: number }
+export interface Rate { label: string; num: number; den: number }
 
-export async function loadStats() {
+/** Which events (and which props on them) have arrived in the last 90 days. */
+export type Presence = Record<string, string[]>;
+
+export async function loadStats(f: Filters) {
   await ensureSchema();
-  const [overview] = await q<Overview>(`
+  // `platform` is checked against the two literals before it is inlined.
+  const scope = f.platform === "mac" || f.platform === "windows"
+    ? `AND device_id IN (SELECT device_id FROM (${DEVICE_PLATFORM}) dp WHERE platform = '${f.platform}')`
+    : "";
+  const EV = (days: number) => `(SELECT * FROM events WHERE ${SINCE(days)} ${scope})`;
+  const ALL = `(SELECT * FROM events WHERE TRUE ${scope})`;
+
+  const presenceRows = await q<{ name: string; keys: string[] }>(`
+    SELECT e.name, coalesce(array_agg(DISTINCT k) FILTER (WHERE k IS NOT NULL), '{}') AS keys
+    FROM events e LEFT JOIN LATERAL jsonb_object_keys(e.props) AS k ON true
+    WHERE e.ts >= now() - interval '90 days' GROUP BY e.name`);
+  const presence: Presence = Object.fromEntries(presenceRows.map((r) => [r.name, r.keys]));
+  const [meta] = await q<{ platform: number; english_level: number; install_date: number }>(`
+    SELECT count(*) FILTER (WHERE platform IS NOT NULL)::int AS platform,
+      count(*) FILTER (WHERE english_level IS NOT NULL)::int AS english_level,
+      count(*) FILTER (WHERE install_date IS NOT NULL)::int AS install_date
+    FROM batches WHERE received_at >= now() - interval '90 days'`);
+
+  const [overview] = await q<{ devices: number; installs: number; today: number; active7: number; events7: number }>(`
     SELECT
-      (SELECT count(DISTINCT device_id) FROM batches)::int AS devices,
-      (SELECT count(DISTINCT device_id) FROM events WHERE name = 'install')::int AS installs,
-      (SELECT count(DISTINCT device_id) FROM events WHERE ${DAY} = (now() AT TIME ZONE 'Asia/Shanghai')::date)::int AS active1,
-      (SELECT count(DISTINCT device_id) FROM events WHERE ${SINCE(7)})::int AS active7,
-      (SELECT count(DISTINCT device_id) FROM events WHERE ${SINCE(30)})::int AS active30,
-      (SELECT count(*) FROM events)::int AS events`);
+      (SELECT count(DISTINCT device_id) FROM ${ALL} e)::int AS devices,
+      (SELECT count(DISTINCT device_id) FROM ${ALL} e WHERE name = 'input_source_added')::int AS installs,
+      (SELECT count(DISTINCT device_id) FROM ${EV(2)} e WHERE ${DAY} = ${TODAY})::int AS today,
+      (SELECT count(DISTINCT device_id) FROM ${EV(7)} e)::int AS active7,
+      (SELECT count(*) FROM ${EV(7)} e)::int AS events7`);
 
-  const days = await q<Day>(`
+  // ---------- 1 真需求 ----------
+  const activeCond = f.strict ? `coalesce(d.chars, 0) >= 20` : `coalesce(d.commits, 0) >= 1`;
+  const retention = await q<{ week: string | null; k: number; den: number; active: number; main: number }>(`
+    WITH ev AS ${ALL},
+    inst AS (
+      SELECT device_id, min(d) AS d0 FROM (
+        SELECT device_id, install_date AS d FROM batches WHERE install_date IS NOT NULL
+        UNION ALL
+        SELECT device_id, ${DAY} FROM ev WHERE name IN ('install', 'input_source_added')
+      ) x GROUP BY device_id
+    ),
+    cohort AS (
+      SELECT device_id, d0 FROM inst
+      WHERE device_id IN (SELECT device_id FROM ev WHERE name = 'input_source_added')
+    ),
+    daily AS (
+      SELECT device_id, (props->>'day')::date AS day,
+        max((props->>'commits')::int) AS commits, max((props->>'chars')::int) AS chars,
+        max((props->>'away_30m')::int) AS away
+      FROM ev WHERE name = 'input_time_daily' AND props ? 'day' GROUP BY 1, 2
+    ),
+    w(k, lo, hi) AS (VALUES (1, 1, 1), (3, 3, 4), (7, 7, 9), (14, 14, 16))
+    SELECT to_char(date_trunc('week', c.d0), 'YYYY-MM-DD') AS week, w.k,
+      count(*)::int AS den,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM daily d WHERE d.device_id = c.device_id
+        AND d.day - c.d0 BETWEEN w.lo AND w.hi AND ${activeCond}))::int AS active,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM daily d WHERE d.device_id = c.device_id
+        AND d.day - c.d0 BETWEEN w.lo AND w.hi AND coalesce(d.chars, 0) >= 200 AND coalesce(d.away, 0) <= 1))::int AS main
+    FROM cohort c CROSS JOIN w
+    WHERE ${TODAY} - c.d0 > w.hi
+    GROUP BY GROUPING SETS ((date_trunc('week', c.d0), w.k), (w.k))
+    ORDER BY week DESC NULLS FIRST, w.k`);
+
+  const [cohorts] = await q<{ n: number }>(`
+    SELECT count(DISTINCT device_id)::int AS n FROM ${ALL} e WHERE name = 'input_source_added'`);
+
+  const DAILY14 = `
+    daily AS (
+      SELECT device_id, (props->>'day')::date AS day,
+        max((props->>'commits')::int) AS commits, max((props->>'chars')::int) AS chars,
+        max((props->>'chars_en_typed')::int) AS en, max((props->>'chars_en_card')::int) AS en_card,
+        max((props->>'away_30m')::int) AS away, max((props->>'youdao_typing_min')::int) AS mins,
+        max((props->>'zh_only_typing_min')::int) AS zh_mins,
+        max((props->>'switch_away')::int) AS sw_away, max((props->>'switch_back')::int) AS sw_back,
+        max((props->>'typing_min_chat')::int) AS m_chat, max((props->>'typing_min_mail')::int) AS m_mail,
+        max((props->>'typing_min_doc')::int) AS m_doc, max((props->>'typing_min_code')::int) AS m_code,
+        max((props->>'typing_min_other')::int) AS m_other
+      FROM ${EV(21)} e WHERE name = 'input_time_daily' AND props ? 'day'
+        AND (props->>'day')::date >= ${TODAY} - 14
+      GROUP BY 1, 2
+    )`;
+
+  const [daily] = await q<{
+    device_days: number; chars_p50: number | null; mins_p50: number | null; en_ratio_p50: number | null;
+    en_typed: number; en_card: number; chars: number; sw_away_p50: number | null; sw_back_p50: number | null;
+    zh_mins: number; mins: number; m_chat: number; m_mail: number; m_doc: number; m_code: number; m_other: number;
+  }>(`
+    WITH ${DAILY14}
+    SELECT count(*) FILTER (WHERE commits >= 1)::int AS device_days,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY chars) FILTER (WHERE commits >= 1) AS chars_p50,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY mins) FILTER (WHERE commits >= 1) AS mins_p50,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY en::float / nullif(chars, 0)) FILTER (WHERE chars > 0 AND en IS NOT NULL) AS en_ratio_p50,
+      coalesce(sum(en), 0)::int AS en_typed, coalesce(sum(en_card), 0)::int AS en_card, coalesce(sum(chars), 0)::int AS chars,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY sw_away) FILTER (WHERE commits >= 1) AS sw_away_p50,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY sw_back) FILTER (WHERE commits >= 1) AS sw_back_p50,
+      coalesce(sum(zh_mins), 0)::int AS zh_mins, coalesce(sum(mins), 0)::int AS mins,
+      coalesce(sum(m_chat), 0)::int AS m_chat, coalesce(sum(m_mail), 0)::int AS m_mail,
+      coalesce(sum(m_doc), 0)::int AS m_doc, coalesce(sum(m_code), 0)::int AS m_code,
+      coalesce(sum(m_other), 0)::int AS m_other
+    FROM daily`);
+
+  const charsDist = await q<Count>(`
+    WITH ${DAILY14}
+    SELECT b AS label, count(*)::int AS n FROM (
+      SELECT CASE WHEN chars < 20 THEN '1–19' WHEN chars < 200 THEN '20–199' WHEN chars < 500 THEN '200–499'
+        WHEN chars < 1000 THEN '500–999' ELSE '1000+' END AS b, chars FROM daily WHERE commits >= 1) x
+    GROUP BY b ORDER BY min(chars)`);
+  const awayDist = await q<Count>(`
+    WITH ${DAILY14}
+    SELECT b AS label, count(*)::int AS n FROM (
+      SELECT CASE WHEN away >= 3 THEN '3+' ELSE away::text END AS b, away FROM daily
+      WHERE commits >= 1 AND away IS NOT NULL) x
+    GROUP BY b ORDER BY min(away)`);
+
+  const [enDominant] = await q<{ num: number; den: number }>(`
     WITH d AS (
-      SELECT generate_series((now() AT TIME ZONE 'Asia/Shanghai')::date - 29,
-                             (now() AT TIME ZONE 'Asia/Shanghai')::date, '1 day')::date AS day
-    ), e AS (
-      SELECT ${DAY} AS day, device_id, name, props FROM events WHERE ${SINCE(31)}
+      SELECT device_id, (props->>'day')::date AS day, max((props->>'commits')::int) AS commits,
+        max((props->>'chars')::int) AS chars, max((props->>'chars_en_typed')::int) AS en
+      FROM ${EV(10)} e WHERE name = 'input_time_daily' AND props ? 'day' AND (props->>'day')::date > ${TODAY} - 7
+      GROUP BY 1, 2
+    ), dev AS (
+      SELECT device_id, sum(chars) AS chars, sum(coalesce(en, 0)) AS en FROM d WHERE commits >= 1 GROUP BY 1
     )
-    SELECT to_char(d.day, 'MM-DD') AS day,
-      count(DISTINCT e.device_id)::int AS active,
-      count(*) FILTER (WHERE e.name = 'install')::int AS installs,
-      count(*) FILTER (WHERE e.name = 'card_shown')::int AS shown,
-      count(*) FILTER (WHERE e.name = 'card_replaced' AND (e.props->>'ok')::boolean)::int AS replaced,
-      count(*) FILTER (WHERE e.name = 'card_dismissed')::int AS dismissed,
-      count(*) FILTER (WHERE e.name = 'gloss_shown')::int AS gloss,
-      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY (e.props->>'ms')::int)
-            FILTER (WHERE e.name = 'sentence_latency' AND (e.props->>'ok')::boolean))::int AS p50
-    FROM d LEFT JOIN e ON e.day = d.day
-    GROUP BY d.day ORDER BY d.day DESC`);
+    SELECT count(*) FILTER (WHERE chars > 0 AND en::float / nullif(chars, 0) >= 0.5)::int AS num, count(*)::int AS den FROM dev`);
 
-  const tones = await q<ToneRow>(`
-    SELECT coalesce(props->>'tone', '?') AS tone,
-      count(*) FILTER (WHERE name = 'card_shown')::int AS shown,
-      count(*) FILTER (WHERE name = 'card_replaced' AND (props->>'ok')::boolean)::int AS replaced,
-      count(*) FILTER (WHERE name = 'card_replaced' AND NOT (props->>'ok')::boolean)::int AS failed,
-      count(*) FILTER (WHERE name IN ('card_dismissed', 'card_ignored'))::int AS dismissed,
-      count(*) FILTER (WHERE name = 'card_undo_after_replace')::int AS undone
-    FROM events
-    WHERE ${SINCE(7)} AND name IN ('card_shown','card_replaced','card_dismissed','card_ignored','card_undo_after_replace')
-    GROUP BY 1 ORDER BY shown DESC`);
+  const enByApp = await q<{ label: string; p50: number | null; n: number }>(`
+    WITH t AS (
+      SELECT device_id, ${DAY} AS day, coalesce(props->>'app_category', 'other') AS cat,
+        sum(coalesce((props->>'chars')::int, 0)) AS zh, sum(coalesce((props->>'en_chars')::int, 0)) AS en
+      FROM ${EV(7)} e WHERE name = 'typing_stats' GROUP BY 1, 2, 3
+    )
+    SELECT cat AS label, percentile_cont(0.5) WITHIN GROUP (ORDER BY en::float / nullif(zh + en, 0)) AS p50, count(*)::int AS n
+    FROM t WHERE zh + en > 0 GROUP BY cat ORDER BY cat`);
 
-  const methods = await q<Count>(`
-    SELECT props->>'method' AS label, count(*)::int AS n FROM events
-    WHERE ${SINCE(7)} AND name = 'card_replaced' AND (props->>'ok')::boolean
-    GROUP BY 1 ORDER BY n DESC`);
-
-  const failures = await q<Count>(`
-    SELECT coalesce(props->>'fail_reason', '?') AS label, count(*)::int AS n FROM events
-    WHERE ${SINCE(7)} AND name = 'card_replaced' AND NOT (props->>'ok')::boolean
-    GROUP BY 1 ORDER BY n DESC LIMIT 10`);
-
-  const [latency] = await q<Latency>(`
+  const [awayTime] = await q<{ n: number; p50: number | null; p90: number | null }>(`
     SELECT count(*)::int AS n,
-      count(*) FILTER (WHERE NOT (props->>'ok')::boolean)::int AS errors,
-      round(percentile_cont(0.5)  WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE (props->>'ok')::boolean))::int AS p50,
-      round(percentile_cont(0.9)  WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE (props->>'ok')::boolean))::int AS p90,
-      round(percentile_cont(0.95) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE (props->>'ok')::boolean))::int AS p95
-    FROM events WHERE ${SINCE(7)} AND name = 'sentence_latency' AND props ? 'ms'`);
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY (props->>'away_s')::int) AS p50,
+      percentile_cont(0.9) WITHIN GROUP (ORDER BY (props->>'away_s')::int) AS p90
+    FROM ${EV(7)} e WHERE name = 'ime_activated' AND props ? 'away_s'`);
+  const toKinds = await q<Count>(`
+    SELECT coalesce(props->>'to_kind', '?') AS label, count(*)::int AS n
+    FROM ${EV(7)} e WHERE name = 'ime_deactivated' GROUP BY 1 ORDER BY n DESC`);
 
-  const errorCodes = await q<Count>(`
-    SELECT coalesce(props->>'error_code', '?') AS label, count(*)::int AS n FROM events
-    WHERE ${SINCE(7)} AND name = 'sentence_latency' AND NOT (props->>'ok')::boolean
-    GROUP BY 1 ORDER BY n DESC LIMIT 10`);
+  const [activeEnglish] = await q<{ n: number; days: number }>(`
+    SELECT
+      (SELECT count(*) FROM ${EV(7)} e WHERE name = 'card_shown' AND props->>'trigger' IN ('ctrl_j', 'click'))::int AS n,
+      (SELECT count(DISTINCT (device_id, props->>'day')) FROM ${EV(9)} e WHERE name = 'input_time_daily'
+        AND props ? 'day' AND (props->>'day')::date > ${TODAY} - 7 AND (props->>'commits')::int >= 1)::int AS days`);
 
-  const learning = await q<Count>(`
-    SELECT name AS label, count(*)::int AS n FROM events
-    WHERE ${SINCE(7)} AND name IN ('gloss_shown','dict_opened','new_word_shown','new_word_clicked',
-                                   'recall_shown','recall_clicked','tone_switched')
-    GROUP BY 1`);
+  const [survey] = await q<{ shown: number; answered: number; very: number }>(`
+    SELECT count(DISTINCT device_id) FILTER (WHERE name = 'survey_shown')::int AS shown,
+      count(DISTINCT device_id) FILTER (WHERE name = 'survey_answered')::int AS answered,
+      count(DISTINCT device_id) FILTER (WHERE name = 'survey_answered' AND props->>'answer' = 'very')::int AS very
+    FROM ${ALL} e WHERE name IN ('survey_shown', 'survey_answered')`);
 
-  const apps = await q<AppRow>(`
-    SELECT props->>'bundle_id' AS bundle_id,
-      (array_agg(props->>'app_name' ORDER BY ts DESC) FILTER (WHERE props ? 'app_name'))[1] AS app_name,
-      count(DISTINCT device_id)::int AS devices, count(*)::int AS n
-    FROM events WHERE ${SINCE(7)} AND name = 'app_used' AND props ? 'bundle_id'
-    GROUP BY 1 ORDER BY devices DESC, n DESC LIMIT 20`);
+  // ---------- 2 只打中文 ----------
+  const TYPING = (days: number) => `
+    t AS (
+      SELECT device_id, ${DAY} AS day,
+        sum(coalesce((props->>'commits')::int, 0)) AS commits, sum(coalesce((props->>'first_hit')::int, 0)) AS hit,
+        sum(coalesce((props->>'keys')::int, 0)) AS keys, sum(coalesce((props->>'chars')::int, 0)) AS chars,
+        sum(coalesce((props->>'abandoned')::int, 0)) AS abandoned, sum(coalesce((props->>'paged')::int, 0)) AS paged,
+        sum(coalesce((props->>'expanded')::int, 0)) AS expanded
+      FROM ${EV(days)} e WHERE name = 'typing_stats' GROUP BY 1, 2
+    )`;
+  const MEDIANS = `
+    percentile_cont(0.5) WITHIN GROUP (ORDER BY hit::float / nullif(commits, 0)) FILTER (WHERE commits > 0) AS hit,
+    percentile_cont(0.5) WITHIN GROUP (ORDER BY keys::float / nullif(chars, 0)) FILTER (WHERE chars > 0) AS kpc,
+    percentile_cont(0.5) WITHIN GROUP (ORDER BY abandoned::float / nullif(commits + abandoned, 0)) FILTER (WHERE commits + abandoned > 0) AS abandon,
+    count(*) FILTER (WHERE commits > 0)::int AS n`;
+  type Typing = { hit: number | null; kpc: number | null; abandon: number | null; n: number };
+  const [typing] = await q<Typing & { paged: number; expanded: number; commits: number }>(`
+    WITH ${TYPING(7)}
+    SELECT ${MEDIANS}, coalesce(sum(paged), 0)::int AS paged, coalesce(sum(expanded), 0)::int AS expanded,
+      coalesce(sum(commits), 0)::int AS commits FROM t`);
+  const typingByDay = await q<Typing & { label: string }>(`
+    WITH ${TYPING(15)}
+    SELECT to_char(day, 'MM-DD') AS label, ${MEDIANS} FROM t GROUP BY day ORDER BY day DESC`);
+  const typingByPlatform = await q<Typing & { label: string }>(`
+    WITH ${TYPING(7)}, dp AS (${DEVICE_PLATFORM})
+    SELECT dp.platform AS label, ${MEDIANS} FROM t JOIN dp USING (device_id) GROUP BY 1 ORDER BY 1`);
+  const typingByApp = await q<Typing & { label: string }>(`
+    WITH t AS (
+      SELECT device_id, ${DAY} AS day, coalesce(props->>'app_category', 'other') AS cat,
+        sum(coalesce((props->>'commits')::int, 0)) AS commits, sum(coalesce((props->>'first_hit')::int, 0)) AS hit,
+        sum(coalesce((props->>'keys')::int, 0)) AS keys, sum(coalesce((props->>'chars')::int, 0)) AS chars,
+        sum(coalesce((props->>'abandoned')::int, 0)) AS abandoned
+      FROM ${EV(7)} e WHERE name = 'typing_stats' GROUP BY 1, 2, 3
+    )
+    SELECT cat AS label, ${MEDIANS} FROM t GROUP BY cat ORDER BY cat`);
+  const typingBySinceInstall = await q<Typing & { label: string }>(`
+    WITH ${TYPING(30)}, inst AS (
+      SELECT device_id, min(d) AS d0 FROM (
+        SELECT device_id, install_date AS d FROM batches WHERE install_date IS NOT NULL
+        UNION ALL SELECT device_id, ${DAY} FROM events WHERE name IN ('install', 'input_source_added')
+      ) x GROUP BY device_id
+    )
+    SELECT CASE WHEN day - d0 <= 0 THEN '第 0 天' WHEN day - d0 = 1 THEN '第 1 天' WHEN day - d0 <= 3 THEN '第 2–3 天'
+      WHEN day - d0 <= 7 THEN '第 4–7 天' WHEN day - d0 <= 14 THEN '第 8–14 天' ELSE '第 15 天以后' END AS label,
+      ${MEDIANS}
+    FROM t JOIN inst USING (device_id) GROUP BY 1 ORDER BY min(day - d0)`);
+  const typingByImport = await q<Typing & { label: string }>(`
+    WITH ${TYPING(7)}, imp AS (
+      SELECT DISTINCT device_id FROM events WHERE name = 'dict_import' AND coalesce((props->>'added')::int, 0) > 0
+    )
+    SELECT CASE WHEN imp.device_id IS NULL THEN '没导入词库' ELSE '导入过词库' END AS label, ${MEDIANS}
+    FROM t LEFT JOIN imp USING (device_id) GROUP BY 1 ORDER BY 1`);
 
+  const [struggle] = await q<{ total: number; struggle: number; devices: number }>(`
+    SELECT count(*)::int AS total,
+      count(*) FILTER (WHERE (props->>'struggle')::boolean)::int AS struggle,
+      count(DISTINCT device_id) FILTER (WHERE (props->>'struggle')::boolean)::int AS devices
+    FROM ${EV(7)} e WHERE name = 'ime_deactivated'`);
+
+  const [dictImport] = await q<{ num: number; den: number }>(`
+    SELECT count(DISTINCT device_id) FILTER (WHERE name = 'dict_import' AND coalesce((props->>'added')::int, 0) > 0)::int AS num,
+      count(DISTINCT device_id) FILTER (WHERE name = 'input_source_added')::int AS den
+    FROM ${ALL} e WHERE name IN ('dict_import', 'input_source_added')`);
+  const dictSources = await q<Count>(`
+    SELECT coalesce(props->>'dict_source', '?') AS label, count(DISTINCT device_id)::int AS n
+    FROM ${ALL} e WHERE name = 'dict_import' GROUP BY 1 ORDER BY n DESC`);
+  const userWords = await q<Count>(`
+    SELECT coalesce(props->>'entry', '?') AS label, count(*)::int AS n
+    FROM ${EV(7)} e WHERE name = 'user_word_added' GROUP BY 1 ORDER BY n DESC`);
   const candidates = await q<Count>(`
-    SELECT CASE WHEN (props->>'index')::int >= 9 THEN '9+' ELSE props->>'index' END AS label,
-      count(*)::int AS n
-    FROM events WHERE ${SINCE(7)} AND name = 'candidate_index_chosen' AND props ? 'index'
+    SELECT CASE WHEN (props->>'index')::int >= 9 THEN '9+' ELSE props->>'index' END AS label, count(*)::int AS n
+    FROM ${EV(7)} e WHERE name = 'candidate_index_chosen' AND props ? 'index'
     GROUP BY 1 ORDER BY min((props->>'index')::int)`);
 
+  // ---------- 3 翻译准不准 ----------
+  const CARDS = `
+    x AS (
+      SELECT name, coalesce(props->>'card_id', 'e' || id) AS cid, props
+      FROM ${EV(7)} e WHERE name IN ('card_shown', 'card_replaced', 'card_glanced', 'card_undo_after_replace',
+        'card_edited_after_replace', 'tone_switched', 'card_feedback')
+    )`;
+  type Adopt = { label: string; shown: number; adopted: number; glanced: number; useful: number; undone: number };
+  const ADOPT = `
+    count(DISTINCT cid) FILTER (WHERE name = 'card_shown')::int AS shown,
+    count(DISTINCT cid) FILTER (WHERE name = 'card_replaced' AND ${OK})::int AS adopted,
+    count(DISTINCT cid) FILTER (WHERE name = 'card_glanced')::int AS glanced,
+    count(DISTINCT cid) FILTER (WHERE (name = 'card_replaced' AND ${OK}) OR name = 'card_glanced')::int AS useful,
+    count(DISTINCT cid) FILTER (WHERE name = 'card_undo_after_replace')::int AS undone`;
+  const adoptBy = (dim: string) => q<Adopt>(`
+    WITH ${CARDS}
+    SELECT coalesce(props->>'${dim}', '?') AS label, ${ADOPT} FROM x
+    WHERE name IN ('card_shown', 'card_replaced', 'card_glanced', 'card_undo_after_replace')
+    GROUP BY 1 ORDER BY shown DESC`);
+  const [adoption] = await q<Adopt & { edited: number; toneSwitched: number; up: number; down: number }>(`
+    WITH ${CARDS}
+    SELECT 'all' AS label, ${ADOPT},
+      count(DISTINCT cid) FILTER (WHERE name = 'card_edited_after_replace')::int AS edited,
+      count(DISTINCT cid) FILTER (WHERE name = 'tone_switched' AND props ? 'card_id')::int AS "toneSwitched",
+      count(*) FILTER (WHERE name = 'card_feedback' AND props->>'vote' = 'up')::int AS up,
+      count(*) FILTER (WHERE name = 'card_feedback' AND props->>'vote' = 'down')::int AS down
+    FROM x`);
+  const adoptByTone = await adoptBy("tone");
+  const adoptByApp = await adoptBy("app_category");
+  const adoptByLen = await adoptBy("len_bucket");
+
+  const PER_CARD = `
+    c AS (
+      SELECT props->>'card_id' AS cid,
+        bool_or(name = 'card_shown') AS shown,
+        bool_or(name = 'card_replaced' AND ${OK}) AS adopted,
+        bool_or(name = 'card_undo_after_replace') AS undone,
+        bool_or(name = 'card_edited_after_replace') AS edited,
+        bool_or(name = 'card_glanced') AS glanced,
+        bool_or(name = 'card_dismissed') AS esc,
+        bool_or(name = 'card_closed') AS closed,
+        bool_or(name = 'sentence_latency' AND NOT ${OK}) AS failed,
+        bool_or(name = 'card_feedback' AND props->>'vote' = 'down') AS down
+      FROM ${EV(7)} e WHERE props ? 'card_id' AND name IN ('card_shown', 'card_replaced', 'card_undo_after_replace',
+        'card_edited_after_replace', 'card_glanced', 'card_dismissed', 'card_closed', 'sentence_latency', 'card_feedback')
+      GROUP BY 1
+    )`;
+  const outcomes = await q<Count>(`
+    WITH ${PER_CARD}
+    SELECT CASE WHEN undone THEN 'undone' WHEN edited THEN 'edited' WHEN adopted THEN 'adopted'
+      WHEN failed THEN 'failed' WHEN closed THEN 'closed' WHEN esc THEN 'esc' WHEN glanced THEN 'glanced'
+      ELSE 'none' END AS label, count(*)::int AS n
+    FROM c WHERE shown GROUP BY 1`);
+  const [downAdopted] = await q<{ down: number; adopted: number }>(`
+    WITH ${PER_CARD}
+    SELECT count(*) FILTER (WHERE down)::int AS down, count(*) FILTER (WHERE down AND adopted)::int AS adopted FROM c`);
+  const downReasons = await q<Count>(`
+    SELECT coalesce(props->>'reason', '未选') AS label, count(*)::int AS n FROM ${EV(7)} e
+    WHERE name = 'card_feedback' AND props->>'vote' = 'down' GROUP BY 1 ORDER BY n DESC`);
+
+  const [latency] = await q<{ n: number; errors: number; p50: number | null; p90: number | null }>(`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE NOT ${OK})::int AS errors,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p50,
+      round(percentile_cont(0.9) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p90
+    FROM ${EV(7)} e WHERE name = 'sentence_latency' AND props ? 'ms'`);
+  const latencyByDay = await q<{ label: string; n: number; errors: number; p50: number | null; p90: number | null }>(`
+    SELECT to_char(${DAY}, 'MM-DD') AS label, count(*)::int AS n, count(*) FILTER (WHERE NOT ${OK})::int AS errors,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p50,
+      round(percentile_cont(0.9) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p90
+    FROM ${EV(15)} e WHERE name = 'sentence_latency' AND props ? 'ms' GROUP BY ${DAY} ORDER BY ${DAY} DESC`);
+  const errorCodes = await q<Count>(`
+    SELECT coalesce(props->>'error_code', '?') AS label, count(*)::int AS n FROM ${EV(7)} e
+    WHERE name = 'sentence_latency' AND NOT ${OK} GROUP BY 1 ORDER BY n DESC LIMIT 10`);
+
+  type Polish = { dim: string; label: string; shown: number; accepted: number; glanced: number; closed: number;
+    esc: number; undone: number; up: number; down: number };
+  const polish = await q<Polish>(`
+    WITH c AS (
+      SELECT props->>'card_id' AS cid,
+        max(props->>'app_category') FILTER (WHERE name = 'polish_shown') AS cat,
+        max(props->>'len_bucket') FILTER (WHERE name = 'polish_shown') AS len,
+        bool_or(name = 'polish_shown') AS shown,
+        bool_or(name = 'polish_accepted' AND ${OK}) AS accepted,
+        bool_or(name = 'polish_glanced') AS glanced,
+        bool_or(name = 'polish_closed') AS closed,
+        bool_or(name = 'polish_dismissed') AS esc,
+        bool_or(name = 'polish_undo_after_accept') AS undone,
+        bool_or(name = 'polish_feedback' AND props->>'vote' = 'up') AS up,
+        bool_or(name = 'polish_feedback' AND props->>'vote' = 'down') AS down
+      FROM ${EV(7)} e WHERE name LIKE 'polish\\_%' AND props ? 'card_id' GROUP BY 1
+    )
+    SELECT CASE WHEN GROUPING(cat) = 0 THEN 'app' WHEN GROUPING(len) = 0 THEN 'len' ELSE 'all' END AS dim,
+      coalesce(CASE WHEN GROUPING(cat) = 0 THEN cat ELSE len END, '?') AS label,
+      count(*)::int AS shown, count(*) FILTER (WHERE accepted)::int AS accepted,
+      count(*) FILTER (WHERE glanced)::int AS glanced, count(*) FILTER (WHERE closed)::int AS closed,
+      count(*) FILTER (WHERE esc)::int AS esc, count(*) FILTER (WHERE undone)::int AS undone,
+      count(*) FILTER (WHERE up)::int AS up, count(*) FILTER (WHERE down)::int AS down
+    FROM c WHERE shown GROUP BY GROUPING SETS ((cat), (len), ())`);
+  const [polishLatency] = await q<{ n: number; errors: number; p50: number | null; p90: number | null }>(`
+    SELECT count(*)::int AS n, count(*) FILTER (WHERE NOT ${OK})::int AS errors,
+      round(percentile_cont(0.5) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p50,
+      round(percentile_cont(0.9) WITHIN GROUP (ORDER BY (props->>'ms')::int) FILTER (WHERE ${OK}))::int AS p90
+    FROM ${EV(7)} e WHERE name = 'polish_latency' AND props ? 'ms'`);
+
+  // ---------- 4 打扰 ----------
+  // Each card counts once, under whichever of the four happened first.
+  const DISRUPT = `
+    s AS (
+      SELECT props->>'card_id' AS cid, min(${DAY}) AS day,
+        CASE WHEN name = 'card_shown' THEN 'translate' ELSE 'polish' END AS type,
+        coalesce(max(props->>'trigger'), '?') AS trig
+      FROM ${EV(8)} e WHERE name IN ('card_shown', 'polish_shown') AND props ? 'card_id' GROUP BY 1, 3
+    ),
+    d AS (
+      SELECT coalesce(props->>'card_id', props->>'recent_card_id') AS cid, ts,
+        CASE WHEN name IN ('card_closed', 'polish_closed') THEN 'x'
+             WHEN name IN ('card_dismissed', 'polish_dismissed') THEN 'esc'
+             WHEN name = 'translation_toggled' THEN 'off' ELSE 'away' END AS kind
+      FROM ${EV(8)} e
+      WHERE (name IN ('card_closed', 'polish_closed', 'card_dismissed', 'polish_dismissed') AND props ? 'card_id')
+         OR (name = 'translation_toggled' AND (props->>'on')::boolean = false AND props ? 'recent_card_id')
+         OR (name = 'ime_deactivated' AND props ? 'recent_card_id')
+    ),
+    fst AS (SELECT DISTINCT ON (cid) cid, kind FROM d ORDER BY cid, ts)`;
+  const DISRUPT_COLS = `count(*)::int AS shown,
+    count(*) FILTER (WHERE f.kind = 'x')::int AS x, count(*) FILTER (WHERE f.kind = 'esc')::int AS esc,
+    count(*) FILTER (WHERE f.kind = 'off')::int AS off, count(*) FILTER (WHERE f.kind = 'away')::int AS away`;
+  type Disrupt = { shown: number; x: number; esc: number; off: number; away: number };
+  const disrupt = await q<Disrupt & { type: string | null; trig: string | null }>(`
+    WITH ${DISRUPT}
+    SELECT s.type, s.trig, ${DISRUPT_COLS}
+    FROM s LEFT JOIN fst f USING (cid) WHERE s.day > ${TODAY} - 7
+    GROUP BY GROUPING SETS ((s.type, s.trig), (s.type), ()) ORDER BY s.type NULLS FIRST, s.trig NULLS FIRST`);
+  const disruptByDay = await q<Disrupt & { label: string }>(`
+    WITH ${DISRUPT}
+    SELECT to_char(s.day, 'MM-DD') AS label, ${DISRUPT_COLS}
+    FROM s LEFT JOIN fst f USING (cid) WHERE s.day > ${TODAY} - 7 GROUP BY s.day ORDER BY s.day DESC`);
+  const [legacyEsc] = await q<{ shown: number; esc: number }>(`
+    SELECT count(*) FILTER (WHERE name = 'card_shown')::int AS shown,
+      count(*) FILTER (WHERE name = 'card_dismissed')::int AS esc
+    FROM ${EV(7)} e WHERE name IN ('card_shown', 'card_dismissed')`);
+
+  const [xPerDevice] = await q<{ devices: number; p50: number | null; p90: number | null; annoyed: number }>(`
+    WITH per AS (
+      SELECT device_id,
+        count(DISTINCT props->>'card_id') FILTER (WHERE name IN ('card_shown', 'polish_shown')) AS shown,
+        count(DISTINCT props->>'card_id') FILTER (WHERE name IN ('card_closed', 'polish_closed')) AS closed
+      FROM ${EV(7)} e WHERE props ? 'card_id' AND name IN ('card_shown', 'polish_shown', 'card_closed', 'polish_closed')
+      GROUP BY 1
+    )
+    SELECT count(*)::int AS devices,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY closed::float / shown) AS p50,
+      percentile_cont(0.9) WITHIN GROUP (ORDER BY closed::float / shown) AS p90,
+      count(*) FILTER (WHERE closed::float / shown >= 0.3)::int AS annoyed
+    FROM per WHERE shown >= 10`);
+
+  const keyLatency = await q<{ label: string; n: number; p50: number | null; p90: number | null; p99: number | null }>(`
+    SELECT to_char(${DAY}, 'MM-DD') AS label, sum((props->>'count')::int)::int AS n,
+      round(sum((props->>'p50_us')::bigint * (props->>'count')::int) / nullif(sum((props->>'count')::int), 0))::int AS p50,
+      round(sum((props->>'p90_us')::bigint * (props->>'count')::int) / nullif(sum((props->>'count')::int), 0))::int AS p90,
+      round(sum((props->>'p99_us')::bigint * (props->>'count')::int) / nullif(sum((props->>'count')::int), 0))::int AS p99
+    FROM ${EV(15)} e WHERE name = 'key_latency' AND props ? 'count' AND props ? 'p50_us' AND props ? 'p90_us' AND props ? 'p99_us'
+    GROUP BY ${DAY} ORDER BY ${DAY} DESC`);
+
+  const toggledOff = await q<Count>(`
+    SELECT feature || ' · ' || scope || CASE WHEN scope = 'app' THEN ' · ' || coalesce(cat, '?') ELSE '' END AS label,
+      count(*)::int AS n
+    FROM (
+      SELECT DISTINCT ON (device_id, props->>'feature', props->>'scope', props->>'app_category')
+        coalesce(props->>'feature', 'translate') AS feature, coalesce(props->>'scope', 'global') AS scope,
+        props->>'app_category' AS cat, (props->>'on')::boolean AS is_on
+      FROM ${ALL} e WHERE name = 'translation_toggled' AND props ? 'on'
+      ORDER BY device_id, props->>'feature', props->>'scope', props->>'app_category', ts DESC
+    ) latest WHERE NOT latest.is_on GROUP BY 1 ORDER BY n DESC`);
+  const [replaceTotal] = await q<{ total: number; failed: number }>(`
+    SELECT count(*)::int AS total, count(*) FILTER (WHERE NOT ${OK})::int AS failed
+    FROM ${EV(7)} e WHERE name = 'card_replaced'`);
+  const replaceFailures = await q<Count>(`
+    SELECT coalesce(props->>'fail_reason', '?') || ' · ' || coalesce(props->>'app_category', '未知应用类别') AS label,
+      count(*)::int AS n
+    FROM ${EV(7)} e WHERE name = 'card_replaced' AND NOT ${OK} GROUP BY 1 ORDER BY n DESC LIMIT 12`);
+  const crashes = await q<{ label: string; crashes: number; mins: number }>(`
+    WITH ev AS (SELECT e.*, b.app_version FROM ${EV(14)} e JOIN batches b USING (batch_id)),
+    m AS (
+      SELECT app_version, sum(mins)::int AS mins FROM (
+        SELECT app_version, device_id, props->>'day', max((props->>'youdao_typing_min')::int) AS mins
+        FROM ev WHERE name = 'input_time_daily' AND props ? 'day' GROUP BY 1, 2, 3) x GROUP BY 1
+    ),
+    c AS (SELECT app_version, count(*)::int AS crashes FROM ev WHERE name = 'ime_restarted'
+      AND coalesce(props->>'kind', 'crash') <> 'system' GROUP BY 1)
+    SELECT coalesce(m.app_version, c.app_version) AS label, coalesce(c.crashes, 0)::int AS crashes,
+      coalesce(m.mins, 0)::int AS mins
+    FROM m FULL JOIN c USING (app_version) ORDER BY label DESC LIMIT 10`);
+
+  // ---------- 5 学习 ----------
+  // Official denominator: active (>= 1 commit via 有道) that week. Until
+  // clients send input_time_daily the page also shows an interim one: any event that week.
+  const WEEKS = `
+    ev AS ${EV(70)},
+    inter AS (
+      SELECT device_id, date_trunc('week', ${DAY})::date AS w, count(*)::int AS n
+      FROM ev WHERE name IN (${LEARNING_IN}) GROUP BY 1, 2
+    ),
+    act AS (
+      SELECT DISTINCT device_id, date_trunc('week', (props->>'day')::date)::date AS w
+      FROM ev WHERE name = 'input_time_daily' AND props ? 'day' AND coalesce((props->>'commits')::int, 0) >= 1
+    ),
+    seen AS (SELECT DISTINCT device_id, date_trunc('week', ${DAY})::date AS w FROM ev),
+    lw AS (SELECT (date_trunc('week', ${TODAY}) - interval '7 days')::date AS w)`;
+  const weeks = await q<{ label: string; current: boolean; act: number; act_learn: number; seen: number; seen_learn: number }>(`
+    WITH ${WEEKS},
+    wk AS (SELECT generate_series(date_trunc('week', ${TODAY}) - interval '8 weeks', date_trunc('week', ${TODAY}), '1 week')::date AS w)
+    SELECT to_char(wk.w, 'YYYY-MM-DD') AS label, wk.w = date_trunc('week', ${TODAY})::date AS current,
+      (SELECT count(*) FROM act a WHERE a.w = wk.w)::int AS act,
+      (SELECT count(*) FROM act a JOIN inter i USING (device_id, w) WHERE a.w = wk.w)::int AS act_learn,
+      (SELECT count(*) FROM seen s WHERE s.w = wk.w)::int AS seen,
+      (SELECT count(*) FROM seen s JOIN inter i USING (device_id, w) WHERE s.w = wk.w)::int AS seen_learn
+    FROM wk ORDER BY wk.w DESC`);
+  const officialLearning = (presence.input_time_daily ?? []).includes("commits");
+  const BASE = officialLearning ? "act" : "seen";
+  const learnBuckets = await q<Count>(`
+    WITH ${WEEKS}
+    SELECT label, count(*)::int AS n FROM (
+      SELECT CASE WHEN coalesce(i.n, 0) = 0 THEN '0' WHEN i.n <= 2 THEN '1–2' WHEN i.n <= 9 THEN '3–9' ELSE '10+' END AS label,
+        coalesce(i.n, 0) AS n
+      FROM ${BASE} b JOIN lw USING (w) LEFT JOIN inter i USING (device_id, w)
+    ) x GROUP BY label ORDER BY min(n)`);
+  const [learnMedian] = await q<{ p50: number | null }>(`
+    WITH ${WEEKS}
+    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY i.n) AS p50
+    FROM ${BASE} b JOIN lw USING (w) JOIN inter i USING (device_id, w)`);
+  const learnByType = await q<{ label: string; n: number; devices: number; base: number }>(`
+    WITH ${WEEKS}, b AS (SELECT device_id FROM ${BASE} JOIN lw USING (w))
+    SELECT t.name AS label,
+      (SELECT count(*) FROM ev, lw WHERE ev.name = t.name AND date_trunc('week', ${DAY})::date = lw.w
+        AND ev.device_id IN (SELECT device_id FROM b))::int AS n,
+      (SELECT count(DISTINCT device_id) FROM ev, lw WHERE ev.name = t.name AND date_trunc('week', ${DAY})::date = lw.w
+        AND ev.device_id IN (SELECT device_id FROM b))::int AS devices,
+      (SELECT count(*) FROM b)::int AS base
+    FROM unnest(ARRAY[${LEARNING_IN}]) AS t(name)`);
+  const learnByLevel = await q<Rate>(`
+    WITH ${WEEKS}, b AS (SELECT device_id FROM ${BASE} JOIN lw USING (w)),
+    lvl AS (
+      SELECT DISTINCT ON (device_id) device_id, level FROM (
+        SELECT device_id, english_level AS level, received_at AS at FROM batches WHERE english_level IS NOT NULL
+        UNION ALL
+        SELECT device_id, props->>'level', ts FROM events WHERE name = 'level_setting' AND props->>'kind' = 'english'
+      ) x ORDER BY device_id, at DESC
+    )
+    SELECT coalesce(lvl.level, '未知') AS label,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM inter i, lw WHERE i.device_id = b.device_id AND i.w = lw.w))::int AS num,
+      count(*)::int AS den
+    FROM b LEFT JOIN lvl USING (device_id) GROUP BY 1 ORDER BY 1`);
+
+  const [learned] = await q<{ highlighted: number; typed: number }>(`
+    SELECT
+      count(*) FILTER (WHERE name = 'word_first_highlighted'
+        AND ts BETWEEN now() - interval '30 days' AND now() - interval '14 days')::int AS highlighted,
+      count(*) FILTER (WHERE name = 'word_typed_back' AND coalesce((props->>'days_since_highlight')::int, 99) <= 14
+        AND ts - make_interval(days => (props->>'days_since_highlight')::int)
+            BETWEEN now() - interval '30 days' AND now() - interval '14 days')::int AS typed
+    FROM ${EV(45)} e WHERE name IN ('word_first_highlighted', 'word_typed_back')`);
+  const [wordBook] = await q<{ added: number; devices: number; reviewed: number; known: number }>(`
+    SELECT count(*) FILTER (WHERE name = 'word_added_to_book')::int AS added,
+      count(DISTINCT device_id) FILTER (WHERE name = 'word_added_to_book')::int AS devices,
+      count(*) FILTER (WHERE name = 'word_reviewed' AND props->>'result' IN ('known', 'unknown'))::int AS reviewed,
+      count(*) FILTER (WHERE name = 'word_reviewed' AND props->>'result' = 'known')::int AS known
+    FROM ${EV(7)} e WHERE name IN ('word_added_to_book', 'word_reviewed')`);
+  const [learnNotTranslate] = await q<{ n: number; den: number }>(`
+    WITH per AS (
+      SELECT device_id,
+        count(*) FILTER (WHERE name = 'card_shown') AS shown,
+        count(*) FILTER (WHERE name = 'card_replaced' AND ${OK}) AS adopted,
+        count(*) FILTER (WHERE name IN (${LEARNING_IN})) AS learn
+      FROM ${EV(7)} e GROUP BY 1
+    )
+    SELECT count(*) FILTER (WHERE learn >= 3 AND (shown = 0 OR adopted::float / nullif(shown, 0) < 0.2))::int AS n,
+      count(*)::int AS den FROM per`);
+
+  // ---------- 运行情况 ----------
   const versions = await q<Count>(`
-    SELECT app_version || ' · macOS ' || os_version AS label, count(*)::int AS n FROM (
-      SELECT DISTINCT ON (device_id) device_id, app_version, os_version FROM batches
-      WHERE received_at >= now() - interval '30 days'
+    SELECT platform || ' · ' || app_version AS label, count(*)::int AS n FROM (
+      SELECT DISTINCT ON (device_id) device_id, app_version,
+        coalesce(platform, CASE WHEN os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END) AS platform
+      FROM batches WHERE received_at >= now() - interval '30 days'
       ORDER BY device_id, received_at DESC) latest
     GROUP BY 1 ORDER BY n DESC LIMIT 15`);
 
-  const levels = await q<Count>(`
-    SELECT (CASE kind WHEN 'english' THEN '英文水平 ' ELSE '生词频率 ' END) || level AS label, count(*)::int AS n FROM (
-      SELECT DISTINCT ON (device_id, props->>'kind') props->>'kind' AS kind, props->>'level' AS level
-      FROM events WHERE name = 'level_setting' AND props ? 'level'
-      ORDER BY device_id, props->>'kind', ts DESC) latest
-    GROUP BY kind, level ORDER BY kind, n DESC`);
-
-  const settings = await q<Count>(`
-    SELECT props->>'key' AS label, count(*)::int AS n FROM events
-    WHERE ${SINCE(30)} AND name = 'setting_changed' AND props ? 'key'
-    GROUP BY 1 ORDER BY n DESC LIMIT 15`);
-
-  return { overview, days, tones, methods, failures, latency, errorCodes, learning, apps, candidates, versions, levels, settings };
+  return {
+    presence, meta, overview, cohorts: cohorts.n,
+    q1: { retention, daily, charsDist, awayDist, enDominant, enByApp, awayTime, toKinds, activeEnglish, survey },
+    q2: { typing, typingByDay, typingByPlatform, typingByApp, typingBySinceInstall, typingByImport, struggle,
+      dictImport, dictSources, userWords, candidates },
+    q3: { adoption, adoptByTone, adoptByApp, adoptByLen, outcomes, downAdopted, downReasons, latency, latencyByDay,
+      errorCodes, polish, polishLatency },
+    q4: { disrupt, disruptByDay, legacyEsc, xPerDevice, keyLatency, toggledOff, replaceTotal, replaceFailures, crashes },
+    q5: { weeks, officialLearning, learnBuckets, learnMedian, learnByType, learnByLevel, learned, wordBook, learnNotTranslate },
+    versions,
+  };
 }
 
 export type Stats = Awaited<ReturnType<typeof loadStats>>;

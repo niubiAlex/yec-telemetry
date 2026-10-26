@@ -17,12 +17,29 @@ const ONBOARDING_SOURCES = ["first_run", "menu", "indicator", "tray", "settings"
 const DICT_SOURCES = ["apple", "sogou", "wetype", "mspy", "other"];
 const DICT_FORMATS = ["apple_lexicon", "scel", "sogou_bin", "mspy_udp", "mspy_udl", "txt"];
 
+export const APP_CATEGORIES = ["chat", "mail", "doc", "code", "other"] as const;
+
 const isTone = (v: unknown) => typeof v === "string" && (TONES as readonly string[]).includes(v);
 const code = (re: RegExp) => (v: unknown) => typeof v === "string" && re.test(v);
 const int = (lo: number, hi: number) => (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi;
+const oneOf = (...values: string[]) => (v: unknown) => typeof v === "string" && values.includes(v);
+const bool = (v: unknown) => typeof v === "boolean";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = code(UUID);
+
+/** A real calendar day, YYYY-MM-DD (so the database can cast it). */
+export function isDay(v: unknown): v is string {
+  if (typeof v !== "string" || !/^20\d\d-\d\d-\d\d$/.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
 
 type Check = (v: unknown) => boolean;
+
+const COUNT = int(0, 10_000_000);
+const MINUTES = int(0, 1440);
+const KIND = oneOf("cjk_ime", "latin_layout", "other");
 
 const PROP: Record<string, Check> = {
   tone: isTone,
@@ -49,7 +66,90 @@ const PROP: Record<string, Check> = {
   added: int(0, 1_000_000),
   removed: int(0, 1_000_000),
   entry: (v) => v === "settings" || v === "onboarding",
+
+  // Beta metrics plan (docs/beta-metrics-plan.md). Counts only, never words.
+  card_id: isUuid,
+  recent_card_id: isUuid,
+  app_category: oneOf(...APP_CATEGORIES),
+  len_bucket: oneOf("s", "m", "l", "xl"),
+  trigger: oneOf("auto", "ctrl_j", "click"),
+  day: isDay,
+  commits: COUNT,
+  chars: COUNT,
+  chars_en_typed: COUNT,
+  chars_en_card: COUNT,
+  away_30m: int(0, 10_000),
+  youdao_typing_min: MINUTES,
+  away_min: MINUTES,
+  zh_only_typing_min: MINUTES,
+  switch_away: int(0, 10_000),
+  switch_back: int(0, 10_000),
+  typing_min_chat: MINUTES,
+  typing_min_mail: MINUTES,
+  typing_min_doc: MINUTES,
+  typing_min_code: MINUTES,
+  typing_min_other: MINUTES,
+  to_kind: KIND,
+  from_kind: KIND,
+  recent_backspaces: int(0, 10_000),
+  recent_abandoned: int(0, 10_000),
+  struggle: bool,
+  away_s: int(0, 366 * 86_400),
+  first_hit: COUNT,
+  keys: COUNT,
+  abandoned: COUNT,
+  paged: COUNT,
+  expanded: COUNT,
+  backspaces: COUNT,
+  en_commits: COUNT,
+  en_chars: COUNT,
+  edit_pct: int(0, 100),
+  vote: oneOf("up", "down"),
+  change_size: oneOf("small", "medium", "large"),
+  feature: oneOf("translate", "polish"),
+  scope: oneOf("global", "app"),
+  on: bool,
+  survey: oneOf("day7_disappointment"),
+  attempt: int(1, 2),
+  answer: oneOf("very", "somewhat", "not"),
+  has_comment: bool,
+  notice_version: int(1, 100),
+  count: COUNT,
+  p50_us: int(0, 600_000_000),
+  p90_us: int(0, 600_000_000),
+  p99_us: int(0, 600_000_000),
+  max_us: int(0, 600_000_000),
+  uptime_min: int(0, 525_600),
+  result: oneOf("known", "unknown", "skipped"),
+  days_since_highlight: int(0, 365),
+  how: oneOf("english_mode", "edited_card"),
 };
+
+// Props whose values depend on the event (`kind`, `entry`, `reason`, ...).
+const EVENT_PROP: Record<string, Record<string, Check>> = {
+  dict_opened: { entry: oneOf("card", "gloss", "menu", "dashboard") },
+  word_added_to_book: { entry: oneOf("card", "dict", "dashboard") },
+  learning_dashboard_opened: { entry: oneOf("menu", "card", "settings") },
+  word_marked_known: { entry: oneOf("dict", "dashboard", "review") },
+  word_reviewed: { entry: oneOf("recall", "dashboard") },
+  user_word_added: { entry: oneOf("candidate", "settings") },
+  improve_notice_shown: { entry: oneOf("onboarding", "first_run", "polish_launch") },
+  improve_optin_changed: { entry: oneOf("notice", "settings") },
+  ime_restarted: { kind: oneOf("crash", "hang_killed", "system") },
+  word_first_highlighted: { kind: oneOf("gloss", "new_word") },
+  word_typed_back: { kind: oneOf("gloss", "new_word") },
+  card_closed: { reason: oneOf("x_button") },
+  polish_closed: { reason: oneOf("x_button") },
+  card_feedback: { reason: oneOf("wrong_meaning", "unnatural", "wrong_tone", "too_long", "other") },
+  polish_feedback: { reason: oneOf("wrong_meaning", "unnatural", "not_needed", "too_much", "other") },
+  polish_shown: { trigger: oneOf("auto", "shortcut", "click") },
+};
+
+const INPUT_TIME_DAILY = [
+  "day", "commits", "chars", "chars_en_typed", "chars_en_card", "away_30m", "youdao_typing_min", "away_min",
+  "zh_only_typing_min", "switch_away", "switch_back",
+  "typing_min_chat", "typing_min_mail", "typing_min_doc", "typing_min_code", "typing_min_other",
+] as const;
 
 /** Event name -> the props kept for it. */
 export const ALLOWLIST: Record<string, readonly string[]> = {
@@ -57,17 +157,18 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   first_launch: [],
   input_source_added: [],
   daily_active: [],
-  app_used: ["bundle_id", "app_name"],
-  card_shown: ["tone"],
-  card_replaced: ["method", "tone", "ok", "fail_reason"],
-  card_dismissed: ["tone"],
+  app_used: ["bundle_id", "app_name", "app_category"],
+  card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger"],
+  card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket"],
+  // Esc only; the X button sends card_closed.
+  card_dismissed: ["tone", "card_id"],
   // Reserved: a card skipped by typing on, once the client splits it from Esc.
   card_ignored: ["tone"],
-  card_undo_after_replace: ["method", "tone"],
-  tone_switched: ["from", "to"],
-  sentence_latency: ["ms", "ok", "error_code"],
+  card_undo_after_replace: ["method", "tone", "card_id"],
+  tone_switched: ["from", "to", "card_id"],
+  sentence_latency: ["ms", "ok", "error_code", "card_id"],
   gloss_shown: [],
-  dict_opened: [],
+  dict_opened: ["entry"],
   new_word_shown: [],
   new_word_clicked: [],
   recall_shown: [],
@@ -83,12 +184,52 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   onboarding_skipped: ["page"],
   dict_import: ["dict_source", "format", "found", "added", "entry"],
   dict_import_removed: ["dict_source", "removed"],
+
+  // 1 真需求: daily totals (the server keeps the max per day) and input-method switches.
+  input_time_daily: INPUT_TIME_DAILY,
+  ime_deactivated: ["to_kind", "app_category", "recent_card_id", "recent_backspaces", "recent_abandoned", "struggle"],
+  ime_activated: ["away_s", "from_kind"],
+  ime_restarted: ["kind", "uptime_min"],
+  survey_shown: ["survey", "attempt"],
+  survey_answered: ["survey", "answer", "has_comment"],
+  survey_dismissed: ["survey", "attempt"],
+  // 2 只打中文: hourly totals per app category.
+  typing_stats: ["app_category", "commits", "first_hit", "keys", "chars", "abandoned", "paged", "expanded",
+    "backspaces", "en_commits", "en_chars"],
+  user_word_added: ["entry"],
+  // 3 翻译准不准
+  card_glanced: ["card_id", "tone", "app_category", "len_bucket"],
+  card_edited_after_replace: ["card_id", "tone", "edit_pct"],
+  card_feedback: ["card_id", "tone", "vote", "reason"],
+  polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger"],
+  polish_accepted: ["card_id", "method", "ok", "fail_reason"],
+  polish_closed: ["card_id", "reason"],
+  polish_dismissed: ["card_id"],
+  polish_undo_after_accept: ["card_id", "method"],
+  polish_glanced: ["card_id"],
+  polish_feedback: ["card_id", "vote", "reason"],
+  polish_latency: ["card_id", "ms", "ok", "error_code"],
+  // 4 打扰
+  card_closed: ["card_id", "tone", "reason", "app_category"],
+  key_latency: ["count", "p50_us", "p90_us", "p99_us", "max_us"],
+  translation_toggled: ["feature", "scope", "on", "app_category", "recent_card_id"],
+  // 5 学习
+  gloss_clicked: [],
+  word_added_to_book: ["entry"],
+  learning_dashboard_opened: ["entry"],
+  word_marked_known: ["entry"],
+  word_reviewed: ["entry", "result"],
+  word_first_highlighted: ["kind"],
+  word_typed_back: ["days_since_highlight", "kind", "how"],
+  // 帮助改进
+  improve_notice_shown: ["entry", "notice_version"],
+  improve_optin_changed: ["on", "entry"],
+  improve_samples_deleted: [],
 };
 
 export const MAX_BODY_BYTES = 256 * 1024;
 export const MAX_EVENTS = 200;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VERSION = /^[A-Za-z0-9 ._()+-]{1,32}$/;
 const DAY_MS = 86_400_000;
 
@@ -98,11 +239,22 @@ export interface CleanEvent {
   props: Record<string, unknown>;
 }
 
+/** Batch-level fields from the beta plan. Null when missing or invalid (older clients send none). */
+export interface BatchMeta {
+  platform: string | null;
+  channel: string | null;
+  englishLevel: string | null;
+  onboarded: boolean | null;
+  installDate: string | null;
+  improveOn: boolean | null;
+}
+
 export interface Batch {
   batchId: string;
   deviceId: string;
   appVersion: string;
   osVersion: string;
+  meta: BatchMeta;
   events: CleanEvent[];
   /** Events with an unknown name: skipped, the rest of the batch still counts. */
   dropped: number;
@@ -112,6 +264,20 @@ export type Parsed = { ok: true; batch: Batch } | { ok: false; error: string };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+const pick = <T>(v: unknown, ok: (v: unknown) => boolean) => (ok(v) ? (v as T) : null);
+
+// An invalid batch-level field is dropped, never fails the batch.
+function parseMeta(body: Record<string, unknown>): BatchMeta {
+  return {
+    platform: pick<string>(body.platform, oneOf("mac", "windows")),
+    channel: pick<string>(body.channel, code(/^[a-z]{1,16}$/)),
+    englishLevel: pick<string>(body.english_level, oneOf("A1", "A2", "B1", "B2", "C1", "C2", "unset")),
+    onboarded: pick<boolean>(body.onboarded, bool),
+    installDate: pick<string>(body.install_date, isDay),
+    improveOn: pick<boolean>(body.improve_on, bool),
+  };
+}
 
 /**
  * Validates a batch. A malformed envelope fails the whole batch (the client
@@ -140,8 +306,9 @@ export function parseBatch(body: unknown, now = Date.now()): Parsed {
     const ts = e.ts >= now - 30 * DAY_MS && e.ts <= now + DAY_MS ? Math.trunc(e.ts) : now;
     const props: Record<string, unknown> = {};
     if (isObject(e.props)) {
+      const own = EVENT_PROP[e.name] ?? {};
       for (const k of allowed) {
-        if (k in e.props && PROP[k](e.props[k])) {
+        if (k in e.props && (own[k] ?? PROP[k])(e.props[k])) {
           props[k] = k === "app_name" ? (e.props[k] as string).trim() : e.props[k];
         }
       }
@@ -156,6 +323,7 @@ export function parseBatch(body: unknown, now = Date.now()): Parsed {
       deviceId: device_id.toLowerCase(),
       appVersion: app_version,
       osVersion: os_version,
+      meta: parseMeta(body),
       events: clean,
       dropped,
     },
