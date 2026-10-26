@@ -296,6 +296,8 @@ export default async function Page({ searchParams }: {
       ready: q5.officialLearning, need: "input_time_daily.commits",
       note: q5.officialLearning ? undefined : `临时口径 ${pct(weeksDone[0]?.seen_learn ?? 0, weeksDone[0]?.seen ?? 0)}` }] },
   ];
+  const sampleN = (r: { zh_en: number; polish: number }) => r.zh_en + r.polish;
+  const samplesReady = ov.sampleTotals.stored > 0 || ov.sampleDays.some((r) => sampleN(r) > 0);
   const devCur = ov.devicesByPeriod.find((r) => r.period === "cur")?.n ?? 0;
   const devPrev = ov.devicesByPeriod.find((r) => r.period === "prev")?.n ?? 0;
   const counts: { label: string; value: number; prev: number; ready: boolean; need: string; note?: string }[] = [
@@ -303,7 +305,10 @@ export default async function Page({ searchParams }: {
     { label: "日均活跃设备", value: sum(cur(ov.series), (r) => r.active) / range, prev: sum(prev(ov.series), (r) => r.active) / range,
       ready: daily, need: "input_time_daily", note: `日均有上报 ${(sum(cur(ov.series), (r) => r.seen) / range).toFixed(1)}` },
     { label: "卡片展示", value: sum(cur(ov.series), (r) => r.shown), prev: sum(prev(ov.series), (r) => r.shown), ready: true, need: "" },
-    { label: "样本上传", value: 0, prev: 0, ready: false, need: "POST /api/samples（采集端未开放）与客户端「帮助改进」" },
+    { label: "样本上传", value: sum(cur(ov.sampleDays), sampleN), prev: sum(prev(ov.sampleDays), sampleN), ready: samplesReady,
+      need: "客户端 0.2.2 起上传到 POST /api/samples",
+      note: `中译英 ${sum(cur(ov.sampleDays), (r) => r.zh_en)} · 润色 ${sum(cur(ov.sampleDays), (r) => r.polish)} · 在库 ${ov.sampleTotals.stored} 条`
+        + (ov.sampleTotals.deletions ? ` · 用户删除 ${ov.sampleTotals.deletions} 次` : "") },
   ];
   const delta = (t: { value: number | null; prev: number | null; lowerIsBetter?: boolean; neutral?: boolean }, rate: boolean) => {
     if (t.value == null || t.prev == null) return <small className="delta">上期无数据</small>;
@@ -379,7 +384,9 @@ export default async function Page({ searchParams }: {
     rateItem("API 失败率", "sentence_latency 与 polish_latency 里 ok = false 的比例", (r) => r.api_err, (r) => r.api_n, { lowerIsBetter: true }),
     rateItem("「帮助改进」关闭率", "当天有上报、带 improve_on 的设备里，improve_on = false 的比例", (r) => r.imp_off, (r) => r.imp_n, {
       lowerIsBetter: true, ready: s.meta.improve_on > 0, need: "批次顶层 improve_on",
-      note: <>样本数 <Pending need="POST /api/samples（采集端未开放）" /></> }),
+      note: samplesReady
+        ? `样本 今天 ${ov.sampleDays.length ? sampleN(ov.sampleDays[ov.sampleDays.length - 1]) : 0} · ${sum(cur(ov.sampleDays), sampleN)}`
+        : <>样本数 <Pending need="客户端 0.2.2 起上传到 POST /api/samples" /></> }),
   ];
 
   function Overview() {
