@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
+import { How } from "./How";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +24,42 @@ const REASON: Record<string, string> = {
   wrong_meaning: "意思错了", unnatural: "不自然", wrong_tone: "语气不对", too_long: "太长", other: "其他", 未选: "未选",
 };
 
+const OFF_CAVEAT = "关掉翻译的设备之后不再出卡，会从分母里消失，比例会偏好看；要和问题 4「关掉以后」的设备级关闭指标一起看。";
+const ADOPT_HINT = "成功替换的卡片 ÷ 展示的卡片，按卡片计";
+const ADOPT_HOW = (
+  <ul>
+    <li><b>分子</b>：点了替换、并且替换成功的卡片（替换失败不算）。</li>
+    <li><b>分母</b>：展示过的卡片。每张卡只算一次（按 card_id 去重）。</li>
+    <li>按卡片展示的那一天算。这里只算中译英，英文润色单独算。</li>
+    <li>没采纳<b>不算失败</b>：很多人只是瞄一眼英文怎么说，看完继续打中文。所以要和「看过率」一起看：卡片显示 ≥ 1.5 秒、并且这段时间用户停下没打字，就算看过。</li>
+    <li>{OFF_CAVEAT}</li>
+  </ul>
+);
+const POLISH_ADOPT_HINT = "成功采纳的润色建议 ÷ 展示的建议，按建议计";
+const POLISH_ADOPT_HOW = (
+  <ul>
+    <li><b>分子</b>：点了采纳、并且替换成功的润色建议。</li>
+    <li><b>分母</b>：展示过的润色建议。每条只算一次（按 card_id 去重）。</li>
+    <li>按建议展示的那一天算。和中译英分开算，不合并。</li>
+    <li>没采纳<b>不算失败</b>，要和润色的「看过率」一起看（显示 ≥ 1.5 秒且用户停下没打字）。</li>
+    <li>关掉润色的设备之后不再出建议，会从分母里消失，比例会偏好看；要和问题 4「关掉以后」的设备级关闭指标一起看。</li>
+  </ul>
+);
+const DISRUPT_HINT = "用户明确表示「不要」的卡片 ÷ 展示的卡片，按卡片计";
+const DISRUPT_HOW = (
+  <ul>
+    <li>只算三种明确的「不想要」：
+      <b>关掉卡片</b>（点卡片上的 ×、按开关快捷键 Shift+Esc、在设置里关）、<b>按 Esc</b>、
+      <b>出卡后切走</b>（卡片还在显示时、或消失后 30 秒内切到别的输入法）。</li>
+    <li>卡片自己消失（继续打字、换输入框、换应用）<b>不算</b>打扰。</li>
+    <li>一张卡有多种操作时只算一次，归到最先发生的那种，所以 关掉 + Esc + 切走 = 打扰率。</li>
+    <li><b>分母</b>：展示过的卡片（按 card_id 去重），按卡片展示的那一天算。</li>
+    <li>这里的数字是中译英和润色<b>合计</b>；分开看问题 4 的「按卡片类型和触发方式」表。</li>
+    <li>对不上任何卡片的关闭（比如几小时没出卡后去设置里关）不进打扰率，只算进设备级的关闭指标。</li>
+    <li>{OFF_CAVEAT}</li>
+  </ul>
+);
+
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
 const pctOf = (v: number | null | undefined) => (v == null ? "–" : `${Math.round(v * 100)}%`);
 const num = (v: number | null | undefined, digits = 0) => (v == null ? "–" : v.toFixed(digits));
@@ -32,13 +69,15 @@ function Pending({ need }: { need: string }) {
   return <span className="pending" title={`需要客户端上报：${need}`}>客户端待上报</span>;
 }
 
-function Kpi({ label, value, ready = true, need = "", note, big }: {
+function Kpi({ label, value, ready = true, need = "", note, big, hint, how, howRight }: {
   label: string; value: ReactNode; ready?: boolean; need?: string; note?: string; big?: boolean;
+  hint?: string; how?: ReactNode; howRight?: boolean;
 }) {
   return (
     <div className={big ? "kpi key" : "kpi"}>
       <b>{ready ? value : <Pending need={need} />}</b>
-      <span>{label}</span>
+      <span>{label}</span>{how && <How right={howRight}>{how}</How>}
+      {hint && <small>{hint}</small>}
       {note && <small>{note}</small>}
       {!ready && need && <small>需要：{need}</small>}
     </div>
@@ -260,7 +299,8 @@ export default async function Page({ searchParams }: {
   type Pt = { v: number | null; base: number; detail?: string };
   type Pts = Record<string, Pt>;
   type DTile = { label: string; pts: Pts; fmt: (v: number | null) => string; ready: boolean; need: string;
-    rate: boolean; title?: string; lowerIsBetter?: boolean; neutral?: boolean; show?: ReactNode; note?: ReactNode };
+    rate: boolean; title?: string; lowerIsBetter?: boolean; neutral?: boolean; show?: ReactNode; note?: ReactNode;
+    hint?: string; how?: ReactNode };
   const byDay = <T extends { day: string }>(rows: T[], f: (r: T) => Pt): Pts => {
     const m = new Map(rows.map((r) => [r.day, r]));
     return Object.fromEntries(days.map((d) => { const r = m.get(d); return [d, r ? f(r) : { v: null, base: 0 }]; }));
@@ -383,11 +423,12 @@ export default async function Page({ searchParams }: {
     { q: 2, title: "只打中文", items: [{ label: "首选命中率（中位数）", pts: byDay(ov.hitSeries, (r) => ({ v: r.hit, base: r.n, detail: `${r.n} 设备·天` })),
       fmt: fPct, rate: true, ready: has("typing_stats", "first_hit"), need: "typing_stats" }] },
     { q: 3, title: "翻译准不准", items: [
-      { label: "采纳率", pts: byDay(ov.series, (r) => rateP(r.adopted, r.shown)), fmt: fPct, rate: true, ready: true, need: "",
-        note: has("card_shown", "card_id") ? undefined : "按事件计" },
+      { label: "采纳率（中译英）", pts: byDay(ov.series, (r) => rateP(r.adopted, r.shown)), fmt: fPct, rate: true, ready: true, need: "",
+        note: has("card_shown", "card_id") ? undefined : "按事件计", hint: ADOPT_HINT, how: ADOPT_HOW },
       { label: "看过率", pts: byDay(ov.series, (r) => rateP(r.glanced, r.shown)), fmt: fPct, rate: true, ready: has("card_glanced"), need: "card_glanced" }] },
     { q: 4, title: "会不会打扰", items: [{ label: "打扰率", lowerIsBetter: true, pts: byDay(ov.disruptSeries, (r) => rateP(intr(r), r.shown)),
-      fmt: fPct, rate: true, ready: disruptReady, need: "translation_turned_off、card_id" }] },
+      fmt: fPct, rate: true, ready: disruptReady, need: "translation_turned_off、card_id",
+      hint: `${DISRUPT_HINT}（中译英 + 润色）`, how: DISRUPT_HOW }] },
     { q: 5, title: "学习", items: [{ label: "当天学习渗透率", pts: byDay(B, (r) => rateP(r.learn_dev, r.dau)), fmt: fPct, rate: true,
       ready: true, need: "", title: `当天有学习互动的设备 ÷ 当天活跃设备。周渗透率见问题 5。${ACTIVE_DEF}`, note: interim }] },
   ];
@@ -449,7 +490,9 @@ export default async function Page({ searchParams }: {
                   <a className="more" href={`#q${t.q}`} aria-label={`问题 ${t.q} 详情`}>详情 ↓</a></h2>
                 {t.sub && <small className="delta">{t.sub}</small>}
                 {t.items.map((m) => (
-                  <div key={m.label} className="tm" title={m.title}><span className="tl">{m.label}</span><Value t={m} /></div>
+                  <div key={m.label} className="tm" title={m.title}>
+                    <span className="tl">{m.label}{m.how && <How right={i >= 3}>{m.how}</How>}</span><Value t={m} />
+                    {m.hint && <small className="hint">{m.hint}</small>}</div>
                 ))}
               </summary>
               {(t.table ?? t.items).some((m) => m.ready) && <DayTable items={(t.table ?? t.items).filter((m) => m.ready)} right={i >= 3} />}
@@ -666,7 +709,8 @@ export default async function Page({ searchParams }: {
           采纳 = card_replaced 中 ok ≠ false，按 card_id 去重，{RL}。当前客户端还不带 card_id，暂按事件计数。
         </p>
         <div className="kpis">
-          <Kpi big label={`卡片采纳率（${RL}）`} value={pct(q3.adoption.adopted, q3.adoption.shown)} note={`${q3.adoption.adopted} / ${q3.adoption.shown}`} />
+          <Kpi big label={`卡片采纳率（${RL}）`} value={pct(q3.adoption.adopted, q3.adoption.shown)} note={`${q3.adoption.adopted} / ${q3.adoption.shown}`}
+            hint={ADOPT_HINT} how={ADOPT_HOW} />
           <Kpi label="看过率" value={pct(q3.adoption.glanced, q3.adoption.shown)} ready={has("card_glanced")} need="card_glanced" />
           <Kpi label="有用率（采纳或看过）" value={pct(q3.adoption.useful, q3.adoption.shown)} ready={has("card_glanced") && has("card_shown", "card_id")} need="card_glanced、card_id" />
           <Kpi label="采纳后撤销率" value={pct(q3.adoption.undone, q3.adoption.adopted)} />
@@ -699,7 +743,8 @@ export default async function Page({ searchParams }: {
 
         <h3>英文润色（单独统计，不并入采纳率）</h3>
         <div className="kpis">
-          <Kpi big label="润色采纳率" value={pct(polishAll?.accepted ?? 0, polishAll?.shown ?? 0)} ready={polishReady} need="polish_shown、polish_accepted" />
+          <Kpi big label="润色采纳率" value={pct(polishAll?.accepted ?? 0, polishAll?.shown ?? 0)} ready={polishReady} need="polish_shown、polish_accepted"
+            hint={POLISH_ADOPT_HINT} how={POLISH_ADOPT_HOW} />
           <Kpi label="看过率" value={pct(polishAll?.glanced ?? 0, polishAll?.shown ?? 0)} ready={has("polish_glanced")} need="polish_glanced" />
           <Kpi label="采纳后撤销率" value={pct(polishAll?.undone ?? 0, polishAll?.accepted ?? 0)} ready={has("polish_undo_after_accept")} need="polish_undo_after_accept" />
           <Kpi label="关闭率" value={pct(polishAll?.closed ?? 0, polishAll?.shown ?? 0)} ready={has("polish_closed") || has("translation_turned_off")} need="translation_turned_off（feature=polish）" />
@@ -720,7 +765,8 @@ export default async function Page({ searchParams }: {
         <h3>关键指标：卡片打扰率</h3>
         <p className="note">打扰率 = 关掉翻译 + Esc + 出卡后切走，按卡片去重、归到最先发生的一种，{RL}。已弃用的 card_closed / polish_closed 计入「点 X」，translation_toggled 计入「设置」。</p>
         <div className="kpis">
-          <Kpi big label={`打扰率（${RL}）`} ready={disruptReady} need={NEED_DISRUPT}
+          <Kpi big label={`打扰率（${RL}，中译英 + 润色）`} ready={disruptReady} need={NEED_DISRUPT}
+            hint={DISRUPT_HINT} how={DISRUPT_HOW}
             value={allDisrupt ? pct(offAll(allDisrupt) + allDisrupt.esc + allDisrupt.away, allDisrupt.shown) : "–"} />
           <Kpi label="关掉翻译率" ready={turnedOff && has("card_shown", "card_id")} need="translation_turned_off、card_shown.card_id"
             value={allDisrupt ? pct(offAll(allDisrupt), allDisrupt.shown) : "–"}
@@ -777,7 +823,8 @@ export default async function Page({ searchParams }: {
                     <td>{pct(r.away, r.shown)}</td><td>{pct(offAll(r) + r.esc + r.away, r.shown)}</td></tr>
                 ))}</tbody>
               </table>
-            )}</section>
+            )}
+            <p className="note">中译英和润色分开算。每行：关掉 + Esc + 切走 = 打扰率，分母是这一类展示过的卡片，每张卡只归到最先发生的那种操作。</p></section>
           <section><h4>打扰率日趋势（关掉 X / 快捷键 / 设置、Esc、切走）</h4>
             {!disruptReady ? <PendingBlock need={NEED_DISRUPT} /> : (
               <table>

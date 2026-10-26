@@ -98,6 +98,17 @@ form.filters select, form.filters button { font: inherit; font-size: 13px; }
 .dv b small { font-size: 11px; color: #1a7f37; }
 .bc .delta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bc .pending { margin: 4px 0 2px; }
+.how { position: relative; display: inline-block; margin-left: 4px; }
+.how button { font: inherit; font-size: 11px; color: var(--bar); background: none; border: 0; padding: 0; cursor: pointer; }
+.how .pop { display: none; position: absolute; z-index: 20; top: 100%; left: 0; margin-top: 4px; width: 300px; max-width: 80vw;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--bar); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15);
+  padding: 8px 10px; font-size: 12px; font-weight: 400; line-height: 1.5; text-align: left; white-space: normal; cursor: auto; }
+.how.right .pop { left: auto; right: 0; }
+.how:hover .pop, .how:focus-within .pop, .how.open .pop { display: block; }
+.how .pop ul { margin: 0; padding-left: 16px; }
+.how .pop li + li { margin-top: 2px; }
+.hint { display: block; color: var(--muted); font-size: 11px; }
+.tm .hint { grid-column: 1 / -1; }
 
 .curve text { font-size: 10px; fill: var(--muted); }
 .curve .grid { stroke: var(--line); }
