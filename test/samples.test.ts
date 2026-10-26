@@ -52,13 +52,28 @@ describe("parseSamples", () => {
   });
 
   it("drops malformed samples but keeps the rest", () => {
-    const r = parseSamples(env([{ ...zhEn, kind: "survey" }, { ...zhEn, vote: "meh" }, { ...zhEn, card_id: "x" },
+    const r = parseSamples(env([{ ...zhEn, kind: "translate" }, { ...zhEn, vote: "meh" }, { ...zhEn, card_id: "x" },
       { ...zhEn, output_en: "" }, { ...polish, source_zh: "错的字段" }, { ...zhEn, source_zh: "a\u0007b" }, polish]), NOW);
     if (!r.ok || !("batch" in r)) throw new Error("expected batch");
     expect(r.batch.rejected.invalid).toBe(5);
     // A field from the other kind is ignored, never stored.
     expect(r.batch.samples).toHaveLength(2);
     expect(JSON.stringify(r.batch.samples)).not.toContain("错的字段");
+  });
+
+  it("accepts a day-7 survey reason with the same filters and a 500-character limit", () => {
+    const survey = { kind: "survey", survey: "day7_disappointment", answer: "very", ts: NOW, comment: "每天写周报都靠它，没了会很麻烦" };
+    const r = parseSamples(env([survey, { ...survey, comment: "好".repeat(500), card_id: CARD, vote: "up" },
+      { ...survey, comment: "好".repeat(501) }, { ...survey, comment: "加我微信 13800138000" },
+      { ...survey, survey: "nps" }, { ...survey, comment: "" }, { ...survey, answer: "maybe" }]), NOW);
+    if (!r.ok || !("batch" in r)) throw new Error("expected batch");
+    expect(r.batch.rejected).toEqual({ invalid: 3, filtered: 1 });
+    expect(r.batch.samples).toHaveLength(3);
+    expect(r.batch.samples[0]).toMatchObject({ kind: "survey", ref: "day7_disappointment", cardId: null, source: survey.comment,
+      output: null, vote: null, answer: "very" });
+    // card fields on a survey sample are ignored; an unknown answer is dropped, not the sample
+    expect(r.batch.samples[1]).toMatchObject({ cardId: null, vote: null });
+    expect(r.batch.samples[2].answer).toBeNull();
   });
 
   it("rejects a malformed envelope", () => {

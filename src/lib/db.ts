@@ -44,24 +44,32 @@ CREATE TABLE IF NOT EXISTS samples (
   id           bigserial PRIMARY KEY,
   device_id    uuid NOT NULL,
   kind         text NOT NULL,
-  card_id      uuid NOT NULL,
+  card_id      uuid,
   ts           timestamptz NOT NULL,
   received_at  timestamptz NOT NULL DEFAULT now(),
   app_version  text NOT NULL,
   os_version   text NOT NULL,
   platform     text,
   source       text NOT NULL,
-  output       text NOT NULL,
-  vote         text NOT NULL,
+  output       text,
+  vote         text,
   reason       text,
   outcome      text,
   tone         text,
   change_size  text,
   app_category text,
-  len_bucket   text,
-  UNIQUE (device_id, kind, card_id)
+  len_bucket   text
 );
 CREATE INDEX IF NOT EXISTS samples_received ON samples (received_at);
+-- survey samples: no card, no output, no vote. ref = card_id, or the survey name.
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS ref text;
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS answer text;
+ALTER TABLE samples ALTER COLUMN card_id DROP NOT NULL;
+ALTER TABLE samples ALTER COLUMN output DROP NOT NULL;
+ALTER TABLE samples ALTER COLUMN vote DROP NOT NULL;
+UPDATE samples SET ref = card_id::text WHERE ref IS NULL AND card_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS samples_device_kind_ref ON samples (device_id, kind, ref);
+ALTER TABLE samples DROP CONSTRAINT IF EXISTS samples_device_id_kind_card_id_key;
 CREATE TABLE IF NOT EXISTS remote_docs (
   name        text PRIMARY KEY,
   body        jsonb NOT NULL,
@@ -139,8 +147,8 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
 }
 
 /**
- * Stores samples. A second vote on the same card replaces the first, so a
- * resent request does not duplicate anything.
+ * Stores samples. A second vote on the same card (or a second reason on the
+ * same survey) replaces the first, so a resent request duplicates nothing.
  */
 export async function storeSamples(b: SampleBatch): Promise<number> {
   await ensureSchema();
@@ -148,20 +156,20 @@ export async function storeSamples(b: SampleBatch): Promise<number> {
   const col = <K extends keyof SampleBatch["samples"][number]>(k: K) => b.samples.map((s) => s[k]);
   const r = await db().query(
     `INSERT INTO samples (device_id, app_version, os_version, platform, kind, card_id, ts, source, output,
-       vote, reason, outcome, tone, change_size, app_category, len_bucket)
+       vote, reason, outcome, tone, change_size, app_category, len_bucket, ref, answer)
      SELECT $1, $2, $3, $4, s.kind, s.card_id, to_timestamp(s.ts / 1000.0), s.source, s.output,
-       s.vote, s.reason, s.outcome, s.tone, s.change_size, s.app_category, s.len_bucket
+       s.vote, s.reason, s.outcome, s.tone, s.change_size, s.app_category, s.len_bucket, s.ref, s.answer
      FROM unnest($5::text[], $6::uuid[], $7::float8[], $8::text[], $9::text[], $10::text[], $11::text[],
-       $12::text[], $13::text[], $14::text[], $15::text[], $16::text[])
-       AS s(kind, card_id, ts, source, output, vote, reason, outcome, tone, change_size, app_category, len_bucket)
-     ON CONFLICT (device_id, kind, card_id) DO UPDATE SET
+       $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[])
+       AS s(kind, card_id, ts, source, output, vote, reason, outcome, tone, change_size, app_category, len_bucket, ref, answer)
+     ON CONFLICT (device_id, kind, ref) DO UPDATE SET answer = EXCLUDED.answer,
        ts = EXCLUDED.ts, received_at = now(), app_version = EXCLUDED.app_version, os_version = EXCLUDED.os_version,
        platform = EXCLUDED.platform, source = EXCLUDED.source, output = EXCLUDED.output, vote = EXCLUDED.vote,
        reason = EXCLUDED.reason, outcome = EXCLUDED.outcome, tone = EXCLUDED.tone, change_size = EXCLUDED.change_size,
        app_category = EXCLUDED.app_category, len_bucket = EXCLUDED.len_bucket`,
     [b.deviceId, b.appVersion, b.osVersion, b.platform, col("kind"), col("cardId"), col("ts"), col("source"),
       col("output"), col("vote"), col("reason"), col("outcome"), col("tone"), col("changeSize"),
-      col("appCategory"), col("lenBucket")],
+      col("appCategory"), col("lenBucket"), col("ref"), col("answer")],
   );
   return r.rowCount ?? 0;
 }

@@ -179,14 +179,15 @@ export async function loadStats(f: Filters) {
       (SELECT count(*) FROM imprv WHERE imprv.day = d.day AND NOT imprv.improve_on)::int AS imp_off
     FROM d LEFT JOIN evd USING (day) LEFT JOIN tdd USING (day) ORDER BY d.day`);
   // Counts only; the dashboard never reads sample text.
-  const sampleDays = await q<{ day: string; cur: boolean; zh_en: number; polish: number }>(`
+  const sampleDays = await q<{ day: string; cur: boolean; zh_en: number; polish: number; survey: number }>(`
     WITH d AS (SELECT generate_series(${TODAY} - ${R2 - 1}, ${TODAY}, '1 day')::date AS day),
     s AS (
-      SELECT ${BATCH_DAY} AS day, count(*) FILTER (WHERE kind = 'zh_en') AS zh_en, count(*) FILTER (WHERE kind = 'polish') AS polish
+      SELECT ${BATCH_DAY} AS day, count(*) FILTER (WHERE kind = 'zh_en') AS zh_en, count(*) FILTER (WHERE kind = 'polish') AS polish,
+        count(*) FILTER (WHERE kind = 'survey') AS survey
       FROM samples WHERE received_at >= now() - interval '${R2 + 1} days' ${scope} GROUP BY 1
     )
     SELECT to_char(d.day, 'MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
-      coalesce(s.zh_en, 0)::int AS zh_en, coalesce(s.polish, 0)::int AS polish
+      coalesce(s.zh_en, 0)::int AS zh_en, coalesce(s.polish, 0)::int AS polish, coalesce(s.survey, 0)::int AS survey
     FROM d LEFT JOIN s USING (day) ORDER BY d.day`);
   const [sampleTotals] = await q<{ stored: number; devices: number; deletions: number }>(`
     SELECT (SELECT count(*) FROM samples WHERE TRUE ${scope})::int AS stored,

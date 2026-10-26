@@ -296,7 +296,7 @@ export default async function Page({ searchParams }: {
       ready: q5.officialLearning, need: "input_time_daily.commits",
       note: q5.officialLearning ? undefined : `临时口径 ${pct(weeksDone[0]?.seen_learn ?? 0, weeksDone[0]?.seen ?? 0)}` }] },
   ];
-  const sampleN = (r: { zh_en: number; polish: number }) => r.zh_en + r.polish;
+  const sampleN = (r: { zh_en: number; polish: number; survey: number }) => r.zh_en + r.polish + r.survey;
   const samplesReady = ov.sampleTotals.stored > 0 || ov.sampleDays.some((r) => sampleN(r) > 0);
   const devCur = ov.devicesByPeriod.find((r) => r.period === "cur")?.n ?? 0;
   const devPrev = ov.devicesByPeriod.find((r) => r.period === "prev")?.n ?? 0;
@@ -307,7 +307,7 @@ export default async function Page({ searchParams }: {
     { label: "卡片展示", value: sum(cur(ov.series), (r) => r.shown), prev: sum(prev(ov.series), (r) => r.shown), ready: true, need: "" },
     { label: "样本上传", value: sum(cur(ov.sampleDays), sampleN), prev: sum(prev(ov.sampleDays), sampleN), ready: samplesReady,
       need: "客户端 0.2.2 起上传到 POST /api/samples",
-      note: `中译英 ${sum(cur(ov.sampleDays), (r) => r.zh_en)} · 润色 ${sum(cur(ov.sampleDays), (r) => r.polish)} · 在库 ${ov.sampleTotals.stored} 条`
+      note: `中译英 ${sum(cur(ov.sampleDays), (r) => r.zh_en)} · 润色 ${sum(cur(ov.sampleDays), (r) => r.polish)} · 问卷 ${sum(cur(ov.sampleDays), (r) => r.survey)} · 在库 ${ov.sampleTotals.stored} 条`
         + (ov.sampleTotals.deletions ? ` · 用户删除 ${ov.sampleTotals.deletions} 次` : "") },
   ];
   const delta = (t: { value: number | null; prev: number | null; lowerIsBetter?: boolean; neutral?: boolean }, rate: boolean) => {
