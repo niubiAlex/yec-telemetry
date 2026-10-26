@@ -50,10 +50,11 @@ export async function loadStats(f: Filters) {
     FROM events e LEFT JOIN LATERAL jsonb_object_keys(e.props) AS k ON true
     WHERE e.ts >= now() - interval '90 days' GROUP BY e.name`);
   const presence: Presence = Object.fromEntries(presenceRows.map((r) => [r.name, r.keys]));
-  const [meta] = await q<{ platform: number; english_level: number; install_date: number }>(`
+  const [meta] = await q<{ platform: number; english_level: number; install_date: number; improve_on: number }>(`
     SELECT count(*) FILTER (WHERE platform IS NOT NULL)::int AS platform,
       count(*) FILTER (WHERE english_level IS NOT NULL)::int AS english_level,
-      count(*) FILTER (WHERE install_date IS NOT NULL)::int AS install_date
+      count(*) FILTER (WHERE install_date IS NOT NULL)::int AS install_date,
+      count(*) FILTER (WHERE improve_on IS NOT NULL)::int AS improve_on
     FROM batches WHERE received_at >= now() - interval '90 days'`);
 
   const [overview] = await q<{ devices: number; installs: number; today: number; active7: number; events7: number }>(`
@@ -91,6 +92,103 @@ export async function loadStats(f: Filters) {
   const devicesByPeriod = await q<{ period: string; n: number }>(`
     SELECT CASE WHEN ${DAY} > ${TODAY} - ${R} THEN 'cur' ELSE 'prev' END AS period, count(DISTINCT device_id)::int AS n
     FROM ${EV(R2 + 1)} e WHERE ${DAY} > ${TODAY} - ${R2} GROUP BY 1`);
+
+  // ---------- 基础数据: one row per day over both periods ----------
+  // Until input_time_daily arrives, "active" falls back to any report that day.
+  const officialActive = (presence.input_time_daily ?? []).includes("commits");
+  const dailyCond = f.strict ? `coalesce(chars, 0) >= 20` : `coalesce(commits, 0) >= 1`;
+  const VKEY = `string_to_array(substring(app_version from '^[0-9]+(?:[.][0-9]+)*'), '.')::int[]`;
+  const BATCH_DAY = `(received_at AT TIME ZONE 'Asia/Shanghai')::date`;
+  const basics = await q<{
+    day: string; cur: boolean; inst_new: number; inst_cum: number; imported: number; onb_n: number; onb_done: number;
+    dau: number; wau: number; seen: number; mac: number; ver_n: number; ver_latest: number;
+    dd: number; mins: number; chars: number; en: number; t_n: number; t_off: number;
+    cards: number; learn: number; learn_dev: number; crashes: number; api_n: number; api_err: number;
+    imp_n: number; imp_off: number;
+  }>(`
+    WITH d AS (SELECT generate_series(${TODAY} - ${R2 - 1}, ${TODAY}, '1 day')::date AS day),
+    ev AS ${EV(R2 + 8)},
+    allev AS ${ALL},
+    inst AS (
+      SELECT device_id, min(x) AS d0 FROM (
+        SELECT device_id, install_date AS x FROM batches WHERE install_date IS NOT NULL
+        UNION ALL
+        SELECT device_id, ${DAY} FROM allev WHERE name IN ('install', 'input_source_added')
+      ) i GROUP BY device_id
+    ),
+    cohort AS (SELECT device_id, d0 FROM inst WHERE device_id IN (SELECT device_id FROM allev WHERE name = 'input_source_added')),
+    imp AS (SELECT DISTINCT device_id FROM allev WHERE name = 'dict_import' AND coalesce((props->>'added')::int, 0) > 0),
+    onb AS (SELECT device_id, min(${DAY}) AS day FROM allev WHERE name = 'onboarding_shown' GROUP BY 1),
+    onb_done AS (SELECT DISTINCT device_id FROM allev WHERE name = 'onboarding_completed'),
+    seen AS (SELECT DISTINCT device_id, ${DAY} AS day FROM ev),
+    td AS (
+      SELECT device_id, (props->>'day')::date AS day,
+        max((props->>'commits')::int) AS commits, max((props->>'chars')::int) AS chars,
+        max((props->>'chars_en_typed')::int) AS en, max((props->>'youdao_typing_min')::int) AS mins,
+        bool_or(props ? 'translate_on') AS t_has, bool_or((props->>'translate_on')::boolean = false) AS t_off
+      FROM ev WHERE name = 'input_time_daily' AND props ? 'day' GROUP BY 1, 2
+    ),
+    act AS (SELECT device_id, day FROM td WHERE ${dailyCond}),
+    a AS (SELECT * FROM ${officialActive ? "act" : "seen"}),
+    dp AS (${DEVICE_PLATFORM}),
+    vb AS (
+      SELECT device_id, ${BATCH_DAY} AS day,
+        coalesce(platform, CASE WHEN os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END) AS platform,
+        max(${VKEY}) AS v
+      FROM batches WHERE received_at >= now() - interval '${R2 + 60} days' ${scope} GROUP BY 1, 2, 3
+    ),
+    -- "Latest" is the newest version any device on that platform had reported by that day.
+    lat AS (SELECT day, platform, max(max(v)) OVER (PARTITION BY platform ORDER BY day) AS latest FROM vb GROUP BY 1, 2),
+    imprv AS (
+      SELECT DISTINCT ON (device_id, ${BATCH_DAY}) ${BATCH_DAY} AS day, improve_on FROM batches
+      WHERE improve_on IS NOT NULL AND received_at >= now() - interval '${R2 + 1} days' ${scope}
+      ORDER BY device_id, ${BATCH_DAY}, received_at DESC
+    ),
+    evd AS (
+      SELECT ${DAY} AS day,
+        count(DISTINCT coalesce(props->>'card_id', 'e' || id)) FILTER (WHERE name = 'card_shown') AS cards,
+        count(*) FILTER (WHERE name IN (${LEARNING_IN})) AS learn,
+        count(DISTINCT device_id) FILTER (WHERE name IN (${LEARNING_IN})) AS learn_dev,
+        count(*) FILTER (WHERE name = 'ime_restarted' AND coalesce(props->>'kind', 'crash') <> 'system') AS crashes,
+        count(*) FILTER (WHERE name IN ('sentence_latency', 'polish_latency')) AS api_n,
+        count(*) FILTER (WHERE name IN ('sentence_latency', 'polish_latency') AND NOT ${OK}) AS api_err
+      FROM ev GROUP BY 1
+    ),
+    tdd AS (
+      SELECT day, count(*) AS dd, sum(coalesce(mins, 0)) AS mins, sum(coalesce(chars, 0)) AS chars,
+        sum(coalesce(en, 0)) AS en, count(*) FILTER (WHERE t_has) AS t_n, count(*) FILTER (WHERE t_off) AS t_off
+      FROM td WHERE coalesce(commits, 0) >= 1 GROUP BY 1
+    )
+    SELECT to_char(d.day, 'MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
+      (SELECT count(*) FROM cohort c WHERE c.d0 = d.day)::int AS inst_new,
+      (SELECT count(*) FROM cohort c WHERE c.d0 <= d.day)::int AS inst_cum,
+      (SELECT count(*) FROM cohort c JOIN imp USING (device_id) WHERE c.d0 = d.day)::int AS imported,
+      (SELECT count(*) FROM onb WHERE onb.day = d.day)::int AS onb_n,
+      (SELECT count(*) FROM onb JOIN onb_done USING (device_id) WHERE onb.day = d.day)::int AS onb_done,
+      (SELECT count(*) FROM a WHERE a.day = d.day)::int AS dau,
+      (SELECT count(DISTINCT device_id) FROM a WHERE a.day BETWEEN d.day - 6 AND d.day)::int AS wau,
+      (SELECT count(*) FROM seen WHERE seen.day = d.day)::int AS seen,
+      (SELECT count(*) FROM seen JOIN dp USING (device_id) WHERE seen.day = d.day AND dp.platform = 'mac')::int AS mac,
+      (SELECT count(*) FROM vb WHERE vb.day = d.day AND vb.v IS NOT NULL)::int AS ver_n,
+      (SELECT count(*) FROM vb JOIN lat USING (day, platform) WHERE vb.day = d.day AND vb.v = lat.latest)::int AS ver_latest,
+      coalesce(tdd.dd, 0)::int AS dd, coalesce(tdd.mins, 0)::int AS mins, coalesce(tdd.chars, 0)::int AS chars,
+      coalesce(tdd.en, 0)::int AS en, coalesce(tdd.t_n, 0)::int AS t_n, coalesce(tdd.t_off, 0)::int AS t_off,
+      coalesce(evd.cards, 0)::int AS cards, coalesce(evd.learn, 0)::int AS learn, coalesce(evd.learn_dev, 0)::int AS learn_dev,
+      coalesce(evd.crashes, 0)::int AS crashes, coalesce(evd.api_n, 0)::int AS api_n, coalesce(evd.api_err, 0)::int AS api_err,
+      (SELECT count(*) FROM imprv WHERE imprv.day = d.day)::int AS imp_n,
+      (SELECT count(*) FROM imprv WHERE imprv.day = d.day AND NOT imprv.improve_on)::int AS imp_off
+    FROM d LEFT JOIN evd USING (day) LEFT JOIN tdd USING (day) ORDER BY d.day`);
+  // Each device's newest version in the current range.
+  const verDist = await q<{ platform: string; version: string; n: number; latest: boolean }>(`
+    WITH v AS (
+      SELECT DISTINCT ON (device_id) device_id, app_version, ${VKEY} AS k,
+        coalesce(platform, CASE WHEN os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END) AS platform
+      FROM batches WHERE received_at >= now() - interval '${R} days' ${scope}
+      ORDER BY device_id, received_at DESC
+    )
+    SELECT platform, app_version AS version, count(*)::int AS n,
+      bool_and(k IS NOT NULL AND k = (SELECT max(k) FROM v v2 WHERE v2.platform = v.platform)) AS latest
+    FROM v GROUP BY 1, 2 ORDER BY n DESC`);
 
   // ---------- 1 真需求 ----------
   const activeCond = f.strict ? `coalesce(d.chars, 0) >= 20` : `coalesce(d.commits, 0) >= 1`;
@@ -142,7 +240,6 @@ export async function loadStats(f: Filters) {
     WHERE ${TODAY} - c.d0 > w.hi AND c.d0 + w.hi + 1 > ${TODAY} - ${R2}
     GROUP BY c.d0 + w.hi + 1, w.k ORDER BY c.d0 + w.hi + 1`);
 
-  const dailyCond = f.strict ? `coalesce(chars, 0) >= 20` : `coalesce(commits, 0) >= 1`;
   const activeTrend = await q<{ label: string; active: number; main: number }>(`
     WITH d AS (SELECT generate_series(${TODAY} - ${R - 1}, ${TODAY}, '1 day')::date AS day),
     daily AS (
@@ -709,7 +806,7 @@ export async function loadStats(f: Filters) {
 
   return {
     range: R,
-    ov: { series, devicesByPeriod, retentionDone, hitSeries, hitByPeriod, disruptSeries },
+    ov: { series, devicesByPeriod, retentionDone, hitSeries, hitByPeriod, disruptSeries, basics, verDist, officialActive },
     presence, meta, overview, cohorts: cohorts.n,
     q1: { retention, cohortRows, activeTrend, daily, charsDist, awayDist, enDominant, enByApp, awayTime, toKinds, activeEnglish, survey },
     q2: { typing, typingByDay, typingByPlatform, typingByApp, typingBySinceInstall, typingByImport, struggle,

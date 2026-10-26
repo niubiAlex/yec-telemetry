@@ -305,14 +305,82 @@ export default async function Page({ searchParams }: {
     { label: "卡片展示", value: sum(cur(ov.series), (r) => r.shown), prev: sum(prev(ov.series), (r) => r.shown), ready: true, need: "" },
     { label: "样本上传", value: 0, prev: 0, ready: false, need: "POST /api/samples（采集端未开放）与客户端「帮助改进」" },
   ];
-  const delta = (t: { value: number | null; prev: number | null; lowerIsBetter?: boolean }, rate: boolean) => {
+  const delta = (t: { value: number | null; prev: number | null; lowerIsBetter?: boolean; neutral?: boolean }, rate: boolean) => {
     if (t.value == null || t.prev == null) return <small className="delta">上期无数据</small>;
     const d = rate ? (t.value - t.prev) * 100 : t.prev > 0 ? ((t.value - t.prev) / t.prev) * 100 : null;
     if (d == null) return <small className="delta">上期为 0</small>;
     const good = t.lowerIsBetter ? d < 0 : d > 0;
     const txt = `${d > 0 ? "+" : ""}${d.toFixed(1)}${rate ? " pt" : "%"}`;
-    return <small className={`delta ${Math.abs(d) < 0.05 ? "" : good ? "up" : "down"}`}>较上期 {txt}</small>;
+    return <small className={`delta ${t.neutral || Math.abs(d) < 0.05 ? "" : good ? "up" : "down"}`}>较上期 {txt}</small>;
   };
+
+  // ---------- 基础数据 ----------
+  type Day = (typeof ov.basics)[number];
+  type Basic = { label: string; title: string; today: ReactNode; period: ReactNode; value: number | null; prev: number | null;
+    rate: boolean; spark: (number | null)[]; ready: boolean; need: string; lowerIsBetter?: boolean; neutral?: boolean; note?: ReactNode };
+  const bCur = cur(ov.basics), bPrev = prev(ov.basics);
+  const bToday = ov.basics[ov.basics.length - 1];
+  const fmt = (v: number | null, digits = 0) => (v == null ? "–" : v.toFixed(digits));
+  const mean = (vs: (number | null)[]) => { const xs = vs.filter((v): v is number => v != null); return xs.length ? xs.reduce((a, v) => a + v, 0) / xs.length : null; };
+  const rateOf = (rows: Day[], n: (r: Day) => number, d: (r: Day) => number) => ratio(sum(rows, n), sum(rows, d));
+  const rateItem = (label: string, title: string, n: (r: Day) => number, d: (r: Day) => number,
+    o: Partial<Basic> = {}): Basic => ({
+    label, title, today: pctOf(bToday ? ratio(n(bToday), d(bToday)) : null), period: pctOf(rateOf(bCur, n, d)),
+    value: rateOf(bCur, n, d), prev: rateOf(bPrev, n, d), rate: true, spark: bCur.map((r) => ratio(n(r), d(r))),
+    ready: true, need: "", ...o,
+  });
+  const perItem = (label: string, title: string, n: (r: Day) => number, d: (r: Day) => number, digits: number,
+    o: Partial<Basic> = {}): Basic => {
+    const v = rateOf(bCur, n, d);
+    return { label, title, today: fmt(bToday ? ratio(n(bToday), d(bToday)) : null, digits), period: fmt(v, digits),
+      value: v, prev: rateOf(bPrev, n, d), rate: false, spark: bCur.map((r) => ratio(n(r), d(r))), ready: true, need: "", ...o };
+  };
+  const dailyMean = (label: string, title: string, f: (r: Day) => number | null, o: Partial<Basic> = {}): Basic => {
+    const v = mean(bCur.map(f));
+    return { label, title, today: fmt(bToday ? f(bToday) : null), period: fmt(v, 1), value: v, prev: mean(bPrev.map(f)),
+      rate: false, spark: bCur.map(f), ready: true, need: "", ...o };
+  };
+  const total = (label: string, title: string, f: (r: Day) => number, o: Partial<Basic> = {}): Basic => ({
+    label, title, today: bToday ? f(bToday) : "–", period: sum(bCur, f), value: sum(bCur, f), prev: sum(bPrev, f),
+    rate: false, spark: bCur.map(f), ready: true, need: "", ...o,
+  });
+  const interim = ov.officialActive ? undefined : "临时：有上报即算活跃";
+  const ACTIVE_DEF = ov.officialActive ? `活跃 = 当天${strict ? "上屏 ≥ 20 字" : "上屏 ≥ 1 次"}` : "还没有 input_time_daily，暂按当天有上报算活跃";
+  const verTop = ov.verDist.slice(0, 3).map((v) => `${platform ? "" : v.platform === "windows" ? "Win " : "Mac "}${v.version} ${pct(v.n, sum(ov.verDist, (x) => x.n))}`).join("、");
+  const minsTotal = sum(bCur, (r) => r.mins);
+  const basicsItems: Basic[] = [
+    total("安装（累计 · 新增）", "累计 = 添加过有道输入源的设备；新增按安装日（install_date，没有时取最早的 install / input_source_added）", (r) => r.inst_new, {
+      today: <>{bToday?.inst_cum ?? 0} <small>+{bToday?.inst_new ?? 0}</small></>, period: `+${sum(bCur, (r) => r.inst_new)}` }),
+    dailyMean("DAU", `每天的活跃设备；「${RL}」是日均。${ACTIVE_DEF}`, (r) => r.dau, { note: interim }),
+    dailyMean("WAU", `截至当天的 7 天内活跃过的设备；「${RL}」是日均。${ACTIVE_DEF}`, (r) => r.wau, { note: interim }),
+    { ...dailyMean("DAU / WAU", "每天 DAU ÷ 截至当天的 WAU，「近 N 天」取日均", (r) => ratio(r.dau, r.wau), { note: interim }),
+      today: pctOf(bToday ? ratio(bToday.dau, bToday.wau) : null), period: pctOf(mean(bCur.map((r) => ratio(r.dau, r.wau)))), rate: true },
+    rateItem(platform === "windows" ? "Windows 占比" : "Mac 占比", "当天有上报的设备按平台分；没有 platform 的旧版本按 os_version 判断",
+      (r) => (platform === "windows" ? r.seen - r.mac : r.mac), (r) => r.seen, { neutral: true,
+        note: platform ? "已按平台筛选" : `Windows ${pct(sum(bCur, (r) => r.seen - r.mac), sum(bCur, (r) => r.seen))}（${RL}）` }),
+    rateItem("最新版本占比", `当天有上报的设备里，用的是该平台当时最新版本的比例。${RL}版本：${ov.verDist.map((v) => `${v.platform} ${v.version} ${v.n} 台`).join("，")}`,
+      (r) => r.ver_latest, (r) => r.ver_n, { note: verTop || undefined }),
+    rateItem("引导完成率", "第一次看到新手引导的设备里，完成了引导的比例，按第一次看到的那天分组", (r) => r.onb_done, (r) => r.onb_n,
+      { ready: has("onboarding_shown"), need: "onboarding_shown、onboarding_completed" }),
+    rateItem("导入词库率", "当天新装的设备里，至今导入过词库（added > 0）的比例", (r) => r.imported, (r) => r.inst_new),
+    perItem("打字分钟 / 活跃设备·天", "有道打字分钟（youdao_typing_min）÷ 上屏 ≥ 1 次的设备·天", (r) => r.mins, (r) => r.dd, 1,
+      { ready: has("input_time_daily", "youdao_typing_min"), need: "input_time_daily.youdao_typing_min" }),
+    perItem("上屏字数 / 活跃设备·天", "上屏字数（chars）÷ 上屏 ≥ 1 次的设备·天；英文占比 = 自己打的英文 ÷ 上屏字数", (r) => r.chars, (r) => r.dd, 0,
+      { ready: has("input_time_daily", "chars"), need: "input_time_daily.chars",
+        note: has("input_time_daily", "chars_en_typed") ? `英文 今天 ${pct(bToday?.en ?? 0, bToday?.chars ?? 0)} · ${pct(sum(bCur, (r) => r.en), sum(bCur, (r) => r.chars))}` : <>英文占比 <Pending need="input_time_daily.chars_en_typed" /></> }),
+    perItem("卡片展示 / 活跃设备·天", `中译英卡片展示（按 card_id 去重）÷ 当天活跃设备。${ACTIVE_DEF}`, (r) => r.cards, (r) => r.dau, 1, { note: interim }),
+    total("学习互动（次）", "点生词、点释义、点回顾、加生词本、开小词典、开学习面板、标已认识、复习，次数合计", (r) => r.learn,
+      { note: `今天 ${bToday?.learn_dev ?? 0} 台有互动` }),
+    rateItem("翻译关着的设备", "当天上屏 ≥ 1 次的设备里，input_time_daily.translate_on = false 的比例；其余是开着", (r) => r.t_off, (r) => r.t_n,
+      { lowerIsBetter: true, ready: has("input_time_daily", "translate_on"), need: "input_time_daily.translate_on" }),
+    total("崩溃 / 重启（次）", "ime_restarted，不含 kind = system", (r) => r.crashes, {
+      lowerIsBetter: true, ready: has("ime_restarted"), need: "ime_restarted",
+      note: has("input_time_daily", "youdao_typing_min") && minsTotal > 0 ? `每千打字分钟 ${((sum(bCur, (r) => r.crashes) / minsTotal) * 1000).toFixed(1)}` : undefined }),
+    rateItem("API 失败率", "sentence_latency 与 polish_latency 里 ok = false 的比例", (r) => r.api_err, (r) => r.api_n, { lowerIsBetter: true }),
+    rateItem("「帮助改进」关闭率", "当天有上报、带 improve_on 的设备里，improve_on = false 的比例", (r) => r.imp_off, (r) => r.imp_n, {
+      lowerIsBetter: true, ready: s.meta.improve_on > 0, need: "批次顶层 improve_on",
+      note: <>样本数 <Pending need="POST /api/samples（采集端未开放）" /></> }),
+  ];
 
   function Overview() {
     return (
@@ -344,6 +412,21 @@ export default async function Page({ searchParams }: {
               ))}
             </a>
           ))}
+        </div>
+        <div className="basics">
+          <h2>基础数据 <small>每格：今天 · {RL}（比率取整段，次数取合计，设备数取日均）· 较上期 · 走势；悬停看口径</small></h2>
+          <div className="bgrid">
+            {basicsItems.map((b) => (
+              <div key={b.label} className="bc" title={b.title}>
+                <span className="tl">{b.label}</span>
+                {b.ready ? <>
+                  <div className="bv"><span><small>今天</small><b>{b.today}</b></span><span><small>{RL}</small><b>{b.period}</b></span></div>
+                  <div className="bf"><Spark values={b.spark} />{delta(b, b.rate)}</div>
+                  {b.note && <small className="delta">{b.note}</small>}
+                </> : <><Pending need={b.need} /><small className="delta">需要：{b.need}</small></>}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
     );
