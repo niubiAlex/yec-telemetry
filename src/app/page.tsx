@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { loadStats, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
+import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -101,25 +101,65 @@ function Curve({ active, main }: { active: (number | null)[]; main: (number | nu
   );
 }
 
-export default async function Page({ searchParams }: { searchParams: { platform?: string; active?: string } }) {
+function Spark({ values }: { values: (number | null)[] }) {
+  const pts = values.map((v, i) => [i, v] as const).filter((p): p is readonly [number, number] => p[1] != null);
+  if (pts.length < 2) return <svg className="spark" aria-hidden="true" />;
+  const W = 72, H = 20;
+  const lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1]));
+  const x = (i: number) => (i * W) / Math.max(1, values.length - 1);
+  const y = (v: number) => (hi === lo ? H / 2 : H - 2 - ((v - lo) / (hi - lo)) * (H - 4));
+  return (
+    <svg className="spark" viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      <polyline points={pts.map(([i, v]) => `${x(i)},${y(v)}`).join(" ")} />
+    </svg>
+  );
+}
+
+function Trend({ rows }: { rows: { label: string; active: number; main: number }[] }) {
+  const W = 720, H = 160, P = 28;
+  const max = Math.max(1, ...rows.map((r) => r.active));
+  const x = (i: number) => P + (i * (W - 2 * P)) / Math.max(1, rows.length - 1);
+  const y = (v: number) => H - P - (v / max) * (H - 2 * P);
+  const line = (k: "active" | "main") => rows.map((r, i) => `${x(i)},${y(r[k])}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="curve wide" role="img" aria-label="每日活跃设备与主力设备">
+      {[0, 0.5, 1].map((v) => (
+        <g key={v}><line x1={P} x2={W - P} y1={y(v * max)} y2={y(v * max)} className="grid" />
+          <text x={2} y={y(v * max) + 4}>{Math.round(v * max)}</text></g>
+      ))}
+      {rows.map((r, i) => (i % 5 === 0 || i === rows.length - 1) && <text key={r.label} x={x(i) - 12} y={H - 6}>{r.label}</text>)}
+      <polyline points={line("active")} className="l-active" />
+      <polyline points={line("main")} className="l-main" />
+    </svg>
+  );
+}
+
+export default async function Page({ searchParams }: {
+  searchParams: { platform?: string; active?: string; cohort?: string; range?: string };
+}) {
   const platform: Platform | null =
     searchParams.platform === "mac" || searchParams.platform === "windows" ? searchParams.platform : null;
   const strict = searchParams.active === "chars20";
-  let s;
+  const cohort: Cohort = searchParams.cohort === "day" ? "day" : "week";
+  const range = (RANGES as readonly number[]).find((r) => String(r) === searchParams.range) ?? 7;
+  const RL = `近 ${range} 天`;
+  let s: Awaited<ReturnType<typeof loadStats>>;
   try {
-    s = await loadStats({ platform, strict });
+    s = await loadStats({ platform, strict, cohort, range });
   } catch (err) {
     console.error(err);
     return <main><h1>读取失败</h1><p className="sub">数据库不可用，检查 DATABASE_URL。</p></main>;
   }
   const P: Presence = s.presence;
   const has = (name: string, key?: string) => name in P && (!key || P[name].includes(key));
-  const href = (p: Platform | null, st: boolean) => {
+  const href = (p: Platform | null, st: boolean = strict, c: Cohort = cohort, r: number = range, anchor = "") => {
     const qs = new URLSearchParams();
+    if (r !== 7) qs.set("range", String(r));
     if (p) qs.set("platform", p);
     if (st) qs.set("active", "chars20");
+    if (c === "day") qs.set("cohort", "day");
     const str = qs.toString();
-    return str ? `/?${str}` : "/";
+    return (str ? `/?${str}` : "/") + anchor;
   };
 
   const daily = has("input_time_daily", "commits");
@@ -129,7 +169,8 @@ export default async function Page({ searchParams }: { searchParams: { platform?
 
   // Retention: the row with week = null is every cohort together.
   const { q1, q2, q3, q4, q5 } = s;
-  const retentionWeeks = Array.from(new Set(q1.retention.filter((r) => r.week).map((r) => r.week as string)));
+  const retentionWeeks = q1.cohortRows.map((r) => r.label);
+  const cohortSize = Object.fromEntries(q1.cohortRows.map((r) => [r.label, r.n]));
   const cell = (week: string | null, k: number) => q1.retention.find((r) => r.week === week && r.k === k);
   const overall = (which: "active" | "main") =>
     WINDOWS.map((k) => { const r = cell(null, k); return r && r.den > 0 ? r[which] / r.den : null; });
@@ -139,15 +180,15 @@ export default async function Page({ searchParams }: { searchParams: { platform?
     return (
       <table>
         <thead>
-          <tr><th scope="col">安装周</th>{WINDOWS.map((k) => <th key={k} scope="col">第 {k} 天</th>)}</tr>
+          <tr><th scope="col">{cohort === "day" ? "安装日" : "安装周"}</th><th scope="col">设备</th>{WINDOWS.map((k) => <th key={k} scope="col">第 {k} 天</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((w) => (
             <tr key={w ?? "all"}>
-              <td>{w ? `${w} 那周` : "全部"}</td>
+              <td>{w ? (cohort === "day" ? w : `${w} 那周`) : "全部"}</td><td>{w ? cohortSize[w] : s.cohorts}</td>
               {WINDOWS.map((k) => {
                 const r = cell(w, k);
-                if (!r) return <td key={k} className="muted">未满</td>;
+                if (!r) return <td key={k} className="muted" title="时间窗还没结束">—</td>;
                 if (!ready) return <td key={k}><Pending need={NEED_DAILY} /></td>;
                 return <td key={k}>{pct(r[which], r.den)} <small>({r[which]}/{r.den})</small></td>;
               })}
@@ -212,6 +253,102 @@ export default async function Page({ searchParams }: { searchParams: { platform?
   const polishReady = has("polish_shown");
   const lastWeek = q5.weeks.find((w, i) => !w.current && i > 0) ?? q5.weeks[1];
 
+  // ---------- 总览 ----------
+  const ov = s.ov;
+  const cur = <T,>(rows: (T & { cur: boolean })[]) => rows.filter((r) => r.cur);
+  const prev = <T,>(rows: (T & { cur: boolean })[]) => rows.filter((r) => !r.cur);
+  const sum = <T,>(rows: T[], f: (r: T) => number) => rows.reduce((a, r) => a + f(r), 0);
+  const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
+  type Tile = { label: string; value: number | null; prev: number | null; spark: (number | null)[];
+    ready: boolean; need: string; lowerIsBetter?: boolean; note?: string };
+  const retTile = (k: number, which: "active" | "main", label: string): Tile => {
+    const rows = ov.retentionDone.filter((r) => r.k === k);
+    const rate = (rs: typeof rows) => ratio(sum(rs, (r) => r[which]), sum(rs, (r) => r.den));
+    return { label, value: rate(cur(rows)), prev: rate(prev(rows)), spark: cur(rows).map((r) => ratio(r[which], r.den)),
+      ready: which === "main" ? dailyChars : activeReady, need: NEED_DAILY };
+  };
+  const hitCur = ov.hitByPeriod.find((r) => r.cur);
+  const hitPrev = ov.hitByPeriod.find((r) => !r.cur);
+  const cardRate = (f: (r: (typeof ov.series)[number]) => number) => ({
+    value: ratio(sum(cur(ov.series), f), sum(cur(ov.series), (r) => r.shown)),
+    prev: ratio(sum(prev(ov.series), f), sum(prev(ov.series), (r) => r.shown)),
+    spark: cur(ov.series).map((r) => ratio(f(r), r.shown)),
+  });
+  const intr = (r: (typeof ov.disruptSeries)[number]) => offAll(r) + r.esc + r.away;
+  const weeksDone = q5.weeks.filter((w) => !w.current);
+  const tiles: { q: number; title: string; items: Tile[] }[] = [
+    { q: 1, title: "真需求 · 留存", items: [
+      retTile(1, "active", "活跃 · 第 1 天"), retTile(7, "active", "活跃 · 第 7 天"), retTile(7, "main", "主力 · 第 7 天")] },
+    { q: 2, title: "只打中文", items: [{ label: "首选命中率", value: hitCur?.hit ?? null, prev: hitPrev?.hit ?? null,
+      spark: ov.hitSeries.slice(-range).map((r) => r.hit), ready: has("typing_stats", "first_hit"), need: "typing_stats" }] },
+    { q: 3, title: "翻译准不准", items: [
+      { label: "采纳率", ...cardRate((r) => r.adopted), ready: true, need: "",
+        note: has("card_shown", "card_id") ? undefined : "按事件计" },
+      { label: "看过率", ...cardRate((r) => r.glanced), ready: has("card_glanced"), need: "card_glanced" }] },
+    { q: 4, title: "会不会打扰", items: [{ label: "打扰率", lowerIsBetter: true,
+      value: ratio(sum(cur(ov.disruptSeries), intr), sum(cur(ov.disruptSeries), (r) => r.shown)),
+      prev: ratio(sum(prev(ov.disruptSeries), intr), sum(prev(ov.disruptSeries), (r) => r.shown)),
+      spark: cur(ov.disruptSeries).map((r) => ratio(intr(r), r.shown)), ready: disruptReady, need: "translation_turned_off、card_id" }] },
+    { q: 5, title: "学习", items: [{ label: `周渗透率（${weeksDone[0]?.label.slice(5) ?? ""} 那周）`,
+      value: weeksDone[0] ? ratio(weeksDone[0].act_learn, weeksDone[0].act) : null,
+      prev: weeksDone[1] ? ratio(weeksDone[1].act_learn, weeksDone[1].act) : null,
+      spark: weeksDone.slice(0, 8).reverse().map((w) => ratio(w.act_learn, w.act)),
+      ready: q5.officialLearning, need: "input_time_daily.commits",
+      note: q5.officialLearning ? undefined : `临时口径 ${pct(weeksDone[0]?.seen_learn ?? 0, weeksDone[0]?.seen ?? 0)}` }] },
+  ];
+  const devCur = ov.devicesByPeriod.find((r) => r.period === "cur")?.n ?? 0;
+  const devPrev = ov.devicesByPeriod.find((r) => r.period === "prev")?.n ?? 0;
+  const counts: { label: string; value: number; prev: number; ready: boolean; need: string; note?: string }[] = [
+    { label: "有上报的设备", value: devCur, prev: devPrev, ready: true, need: "" },
+    { label: "日均活跃设备", value: sum(cur(ov.series), (r) => r.active) / range, prev: sum(prev(ov.series), (r) => r.active) / range,
+      ready: daily, need: "input_time_daily", note: `日均有上报 ${(sum(cur(ov.series), (r) => r.seen) / range).toFixed(1)}` },
+    { label: "卡片展示", value: sum(cur(ov.series), (r) => r.shown), prev: sum(prev(ov.series), (r) => r.shown), ready: true, need: "" },
+    { label: "样本上传", value: 0, prev: 0, ready: false, need: "POST /api/samples（采集端未开放）与客户端「帮助改进」" },
+  ];
+  const delta = (t: { value: number | null; prev: number | null; lowerIsBetter?: boolean }, rate: boolean) => {
+    if (t.value == null || t.prev == null) return <small className="delta">上期无数据</small>;
+    const d = rate ? (t.value - t.prev) * 100 : t.prev > 0 ? ((t.value - t.prev) / t.prev) * 100 : null;
+    if (d == null) return <small className="delta">上期为 0</small>;
+    const good = t.lowerIsBetter ? d < 0 : d > 0;
+    const txt = `${d > 0 ? "+" : ""}${d.toFixed(1)}${rate ? " pt" : "%"}`;
+    return <small className={`delta ${Math.abs(d) < 0.05 ? "" : good ? "up" : "down"}`}>较上期 {txt}</small>;
+  };
+
+  function Overview() {
+    return (
+      <section className="overview" aria-label="总览">
+        <div className="counts">
+          {counts.map((c) => (
+            <div key={c.label} className="count">
+              <span>{c.label}</span>
+              <b>{c.ready ? (Number.isInteger(c.value) ? c.value : c.value.toFixed(1)) : <Pending need={c.need} />}</b>
+              {c.ready && delta(c, false)}
+              {c.note && c.ready && <small className="delta">{c.note}</small>}
+            </div>
+          ))}
+        </div>
+        <div className="tiles">
+          {tiles.map((t) => (
+            <a key={t.q} className="tile" href={`#q${t.q}`} aria-label={`问题 ${t.q}：${t.title}，查看详情`}>
+              <h2><span className="qn">{t.q}</span>{t.title}</h2>
+              {t.items.map((m) => (
+                <div key={m.label} className="tm">
+                  <span className="tl">{m.label}</span>
+                  {m.ready ? <>
+                    <b>{pctOf(m.value)}</b>
+                    <Spark values={m.spark} />
+                    {delta(m, true)}
+                    {m.note && <small className="delta">{m.note}</small>}
+                  </> : <><Pending need={m.need} />{m.note && <small className="delta">{m.note}</small>}</>}
+                </div>
+              ))}
+            </a>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   const outcomes = OUTCOME_ORDER.map((k) => ({ label: k, n: q3.outcomes.find((o) => o.label === k)?.n ?? 0 }));
   const levelRows = (rows: Rate[]) => rows.map((r) => ({ label: `${r.label}：${pct(r.num, r.den)}`, n: r.den }));
 
@@ -219,36 +356,34 @@ export default async function Page({ searchParams }: { searchParams: { platform?
     <main>
       <h1>有道输入 · Beta 指标</h1>
       <p className="sub">
-        按《Beta 指标方案》的五个问题组织。匿名统计，只有计数、枚举和错误码，没有输入内容。日期按北京时间，安装当天是第 0 天。
-        标 <Pending need="" /> 的指标需要的事件客户端还没开始发，不是 0。
+        上面是总览，点卡片跳到对应问题的详情。匿名统计，只有计数、枚举和错误码。日期按北京时间。
+        <Pending need="" /> 表示客户端还没开始发需要的事件，不是 0。
       </p>
 
-      <nav className="filters" aria-label="筛选">
-        <span>平台：</span>
-        <a href={href(null, strict)} aria-current={!platform}>全部</a>
-        <a href={href("mac", strict)} aria-current={platform === "mac"}>Mac</a>
-        <a href={href("windows", strict)} aria-current={platform === "windows"}>Windows</a>
-        <span className="sep">「活跃」口径：</span>
-        <a href={href(platform, false)} aria-current={!strict}>当天上屏 ≥ 1 次</a>
-        <a href={href(platform, true)} aria-current={strict}>当天上屏 ≥ 20 字</a>
+      <nav className="filters" aria-label="筛选：总览和下面的详情都按这里">
+        <span>日期范围：</span>
+        {RANGES.map((r) => <a key={r} href={href(platform, strict, cohort, r)} aria-current={range === r}>近 {r} 天</a>)}
+        <span className="sep">平台：</span>
+        <a href={href(null)} aria-current={!platform}>全部</a>
+        <a href={href("mac")} aria-current={platform === "mac"}>Mac</a>
+        <a href={href("windows")} aria-current={platform === "windows"}>Windows</a>
+        <small className="note">「较上期」对比前一个 {range} 天。</small>
       </nav>
 
-      <section className="kpis" aria-label="概览">
-        <Kpi label="设备总数" value={s.overview.devices} />
-        <Kpi label="已添加输入法的设备" value={s.overview.installs} />
-        <Kpi label="今日有上报" value={s.overview.today} />
-        <Kpi label="7 日有上报" value={s.overview.active7} />
-        <Kpi label="7 日事件数" value={s.overview.events7} />
-      </section>
-      <nav className="toc" aria-label="目录">
-        <a href="#q1">1 真需求</a><a href="#q2">2 只打中文</a><a href="#q3">3 翻译准不准</a>
-        <a href="#q4">4 打扰</a><a href="#q5">5 学习</a><a href="#ops">运行情况</a>
-      </nav>
+      <Overview />
 
       <Question n={1} title="是不是真需求" ask="用户会不会在真实输入里一直用它。">
+        <nav className="filters" aria-label="留存口径">
+          <span>「活跃」口径：</span>
+          <a href={href(platform, false, cohort, range, "#q1")} aria-current={!strict}>当天上屏 ≥ 1 次</a>
+          <a href={href(platform, true, cohort, range, "#q1")} aria-current={strict}>当天上屏 ≥ 20 字</a>
+          <span className="sep">留存分组：</span>
+          <a href={href(platform, strict, "day", range, "#q1")} aria-current={cohort === "day"}>按安装日</a>
+          <a href={href(platform, strict, "week", range, "#q1")} aria-current={cohort === "week"}>按安装周</a>
+        </nav>
         <h3>关键指标：两层留存</h3>
         <p className="note">
-          分母：时间窗已结束、有 input_source_added 的设备（{s.cohorts} 台已添加）。第 3 / 7 / 14 天分别看第 3–4 / 7–9 / 14–16 天里任意一天。
+          分母：时间窗已结束、有 input_source_added 的设备（{s.cohorts} 台已添加）。第 3 / 7 / 14 天分别看第 3–4 / 7–9 / 14–16 天里任意一天；时间窗还没结束的格子显示「—」。留存表按安装日期分组，不受日期范围影响。
           活跃 = 当天{strict ? "上屏 ≥ 20 字" : "上屏 ≥ 1 次"}；主力 = 当天上屏 ≥ 200 字且「切走不回」≤ 1 次。
         </p>
         <div className="kpis four">
@@ -260,19 +395,21 @@ export default async function Page({ searchParams }: { searchParams: { platform?
           ))}
         </div>
         <div className="grid">
-          <section><h4>活跃留存（按安装周）</h4><RetentionTable which="active" ready={activeReady} /></section>
-          <section><h4>主力留存（按安装周）</h4><RetentionTable which="main" ready={dailyChars} /></section>
+          <section><h4>活跃留存（按安装{cohort === "day" ? "日" : "周"}）</h4><RetentionTable which="active" ready={activeReady} /></section>
+          <section><h4>主力留存（按安装{cohort === "day" ? "日" : "周"}）</h4><RetentionTable which="main" ready={dailyChars} /></section>
         </div>
         <h4>留存曲线（<span className="k-active">活跃</span> / <span className="k-main">主力</span>，两线之差是「还在用但不是主力」）</h4>
         {dailyChars ? <Curve active={overall("active")} main={overall("main")} /> : <PendingBlock need={NEED_DAILY} />}
+        <h4>每日<span className="k-active">活跃设备</span>和<span className="k-main">主力设备</span>（{RL}）</h4>
+        {dailyChars ? <Trend rows={q1.activeTrend} /> : <PendingBlock need={NEED_DAILY} />}
 
         <h3>辅助指标</h3>
         <div className="kpis">
-          <Kpi label="每日上屏字数中位数（近 14 天）" value={num(d1.chars_p50)} ready={dailyChars} need="input_time_daily.chars" />
+          <Kpi label={`每日上屏字数中位数（${RL}）`} value={num(d1.chars_p50)} ready={dailyChars} need="input_time_daily.chars" />
           <Kpi label="每日有道打字分钟中位数" value={num(d1.mins_p50)} ready={has("input_time_daily", "youdao_typing_min")} need="input_time_daily.youdao_typing_min" />
           <Kpi label="英文输入占比（中位数）" value={pctOf(d1.en_ratio_p50)} ready={has("input_time_daily", "chars_en_typed")} need="input_time_daily.chars_en_typed"
             note={has("input_time_daily", "chars_en_card") ? `卡片替换进去的英文另计：${pct(d1.en_card, d1.chars)}` : undefined} />
-          <Kpi label="以英文为主的设备（近 7 天）" value={pct(q1.enDominant.num, q1.enDominant.den)} ready={has("input_time_daily", "chars_en_typed")} need="input_time_daily.chars_en_typed" />
+          <Kpi label={`以英文为主的设备（${RL}）`} value={pct(q1.enDominant.num, q1.enDominant.den)} ready={has("input_time_daily", "chars_en_typed")} need="input_time_daily.chars_en_typed" />
           <Kpi label="每天切走 / 切回次数（中位数）" value={`${num(d1.sw_away_p50)} / ${num(d1.sw_back_p50)}`} ready={has("input_time_daily", "switch_away")} need="input_time_daily.switch_away、switch_back" />
           <Kpi label="离开时长 p50 / p90" value={`${num(q1.awayTime.p50 == null ? null : q1.awayTime.p50 / 60, 1)} / ${num(q1.awayTime.p90 == null ? null : q1.awayTime.p90 / 60, 1)} 分`} ready={has("ime_activated", "away_s")} need="ime_activated.away_s" />
           <Kpi label="每人每天主动用英文次数" value={q1.activeEnglish.days > 0 ? (q1.activeEnglish.n / q1.activeEnglish.days).toFixed(1) : "–"} ready={has("card_shown", "trigger") && daily} need="card_shown.trigger、input_time_daily" />
@@ -280,42 +417,42 @@ export default async function Page({ searchParams }: { searchParams: { platform?
             note={has("survey_shown") ? `回答率 ${pct(q1.survey.answered, q1.survey.shown)} · 参考线 40%` : "参考线 40%"} />
         </div>
         <div className="grid">
-          <section><h4>门槛校准：每日上屏字数（设备·天，近 14 天，200 字为主力线）</h4>
+          <section><h4>门槛校准：每日上屏字数（设备·天，{RL}，200 字为主力线）</h4>
             <Bars rows={q1.charsDist} ready={dailyChars} need="input_time_daily.chars" /></section>
           <section><h4>门槛校准：每日「切走不回」次数（1 次为主力线）</h4>
             <Bars rows={q1.awayDist} ready={has("input_time_daily", "away_30m")} need="input_time_daily.away_30m" /></section>
-          <section><h4>有道打字分钟按应用类别（近 14 天）</h4>
+          <section><h4>有道打字分钟按应用类别（{RL}）</h4>
             <Bars rows={catMins} label={(c) => APP[c] ?? c} unit=" 分" ready={has("input_time_daily", "typing_min_chat")} need="input_time_daily.typing_min_*" /></section>
-          <section><h4>英文输入占比按应用类别（中位数，近 7 天）</h4>
+          <section><h4>英文输入占比按应用类别（中位数，{RL}）</h4>
             <Bars rows={q1.enByApp.map((r) => ({ label: r.label, n: Math.round((r.p50 ?? 0) * 100) }))} unit="%" label={(c) => APP[c] ?? c}
               ready={has("typing_stats", "en_chars")} need="typing_stats.en_chars" /></section>
-          <section><h4>切到哪类输入法（近 7 天）</h4>
+          <section><h4>切到哪类输入法（{RL}）</h4>
             <Bars rows={q1.toKinds} label={(k) => TO_KIND[k] ?? k} ready={has("ime_deactivated", "to_kind")} need="ime_deactivated.to_kind" /></section>
         </div>
       </Question>
 
       <Question n={2} title="换输入法的成本能不能忍" ask="只打中文时好不好用。">
         <h3>关键指标：首选命中率</h3>
-        <p className="note">用候选第 1 个上屏的次数 ÷ 中文上屏次数，按设备·天算再取中位数，近 7 天。</p>
+        <p className="note">用候选第 1 个上屏的次数 ÷ 中文上屏次数，按设备·天算再取中位数，{RL}。</p>
         <div className="kpis">
-          <Kpi big label="首选命中率（近 7 天中位数）" value={pctOf(q2.typing.hit)} ready={has("typing_stats", "first_hit")} need="typing_stats.first_hit、commits" />
+          <Kpi big label={`首选命中率（${RL}中位数）`} value={pctOf(q2.typing.hit)} ready={has("typing_stats", "first_hit")} need="typing_stats.first_hit、commits" />
           <Kpi label="每字按键数" value={num(q2.typing.kpc, 2)} ready={has("typing_stats", "keys")} need="typing_stats.keys、chars" />
           <Kpi label="放弃率" value={pctOf(q2.typing.abandon)} ready={has("typing_stats", "abandoned")} need="typing_stats.abandoned" />
           <Kpi label="翻页 / 展开使用率" value={`${pct(q2.typing.paged, q2.typing.commits)} / ${pct(q2.typing.expanded, q2.typing.commits)}`} ready={has("typing_stats", "paged")} need="typing_stats.paged、expanded" />
           <Kpi label="挣扎后切走 / 全部切走" value={pct(q2.struggle.struggle, q2.struggle.total)} ready={has("ime_deactivated", "struggle")} need="ime_deactivated.struggle"
             note={has("ime_deactivated", "struggle") ? `发生过的设备 ${q2.struggle.devices} 台` : undefined} />
           <Kpi label="导入过词库的设备" value={pct(q2.dictImport.num, q2.dictImport.den)} note={`${q2.dictImport.num} / ${q2.dictImport.den} 台`} />
-          <Kpi label="「我的词」新增（近 7 天）" value={q2.userWords.reduce((a, r) => a + r.n, 0)} ready={has("user_word_added")} need="user_word_added" />
+          <Kpi label={`「我的词」新增（${RL}）`} value={q2.userWords.reduce((a, r) => a + r.n, 0)} ready={has("user_word_added")} need="user_word_added" />
           <Kpi label="纯中文打字占比" value={pct(d1.zh_mins, d1.mins)} ready={has("input_time_daily", "zh_only_typing_min")} need="input_time_daily.zh_only_typing_min" />
         </div>
         <div className="grid">
-          <section><h4>日趋势（近 15 天）</h4>{typingTable(q2.typingByDay, "日期")}</section>
+          <section><h4>日趋势（{RL}）</h4>{typingTable(q2.typingByDay, "日期")}</section>
           <section><h4>按平台</h4>{typingTable(q2.typingByPlatform, "平台", (p) => (p === "windows" ? "Windows" : "Mac"))}
             <h4>安装后第 N 天（会不会越用越顺）</h4>{typingTable(q2.typingBySinceInstall, "安装后")}</section>
           <section><h4>按应用类别</h4>{typingTable(q2.typingByApp, "应用类别", (c) => APP[c] ?? c)}</section>
           <section><h4>导入词库 vs 没导入</h4>{typingTable(q2.typingByImport, "设备")}</section>
           <section><h4>导入词库来源（设备数）</h4><Bars rows={q2.dictSources} /></section>
-          <section><h4>候选选第几个（近 7 天，已有事件）</h4>
+          <section><h4>候选选第几个（{RL}，已有事件）</h4>
             <Bars rows={q2.candidates} label={(i) => `第 ${i === "9+" ? "10+" : Number(i) + 1} 个`} />
             <p className="note">candidate_index_chosen 可能不含空格选首选，不能代替首选命中率。</p></section>
         </div>
@@ -324,10 +461,10 @@ export default async function Page({ searchParams }: { searchParams: { platform?
       <Question n={3} title="翻译够不够准，用户愿不愿意采纳" ask="展示了但没采纳不算失败；采纳率要和看过率一起读。">
         <h3>关键指标：卡片采纳率</h3>
         <p className="note">
-          采纳 = card_replaced 中 ok ≠ false，按 card_id 去重，近 7 天。当前客户端还不带 card_id，暂按事件计数。
+          采纳 = card_replaced 中 ok ≠ false，按 card_id 去重，{RL}。当前客户端还不带 card_id，暂按事件计数。
         </p>
         <div className="kpis">
-          <Kpi big label="卡片采纳率（近 7 天）" value={pct(q3.adoption.adopted, q3.adoption.shown)} note={`${q3.adoption.adopted} / ${q3.adoption.shown}`} />
+          <Kpi big label={`卡片采纳率（${RL}）`} value={pct(q3.adoption.adopted, q3.adoption.shown)} note={`${q3.adoption.adopted} / ${q3.adoption.shown}`} />
           <Kpi label="看过率" value={pct(q3.adoption.glanced, q3.adoption.shown)} ready={has("card_glanced")} need="card_glanced" />
           <Kpi label="有用率（采纳或看过）" value={pct(q3.adoption.useful, q3.adoption.shown)} ready={has("card_glanced") && has("card_shown", "card_id")} need="card_glanced、card_id" />
           <Kpi label="采纳后撤销率" value={pct(q3.adoption.undone, q3.adoption.adopted)} />
@@ -342,7 +479,7 @@ export default async function Page({ searchParams }: { searchParams: { platform?
           <section><h4>按场景</h4>{adoptTable(q3.adoptByTone, TONE, true, "")}</section>
           <section><h4>按应用类别</h4>{adoptTable(q3.adoptByApp, APP, has("card_shown", "app_category"), "card_shown / card_replaced 的 app_category")}</section>
           <section><h4>按句长</h4>{adoptTable(q3.adoptByLen, LEN, has("card_shown", "len_bucket"), "card_shown / card_replaced 的 len_bucket")}</section>
-          <section><h4>卡片去向（近 7 天）</h4>
+          <section><h4>卡片去向（{RL}）</h4>
             <Bars rows={outcomes} label={(k) => OUTCOME[k] ?? k} ready={has("card_shown", "card_id")} need="card_id（卡片相关事件）" />
             <p className="note">「看过未采纳」和「没看也没操作」是中性的，不算负面。</p></section>
           <section><h4>出卡耗时日趋势</h4>
@@ -354,7 +491,7 @@ export default async function Page({ searchParams }: { searchParams: { platform?
                 ))}</tbody>
               </table>
             )}</section>
-          <section><h4>失败错误码（近 7 天）</h4><Bars rows={q3.errorCodes} />
+          <section><h4>失败错误码（{RL}）</h4><Bars rows={q3.errorCodes} />
             <h4>👎 原因</h4><Bars rows={q3.downReasons} label={(r) => REASON[r] ?? r} ready={has("card_feedback")} need="card_feedback" /></section>
         </div>
 
@@ -379,9 +516,9 @@ export default async function Page({ searchParams }: { searchParams: { platform?
 
       <Question n={4} title="会不会干扰正常打字" ask="只有关掉翻译（点 X、开关快捷键、设置）、Esc、出卡后切走三种明确的「不想要」算打扰；卡片自己消失不算。">
         <h3>关键指标：卡片打扰率</h3>
-        <p className="note">打扰率 = 关掉翻译 + Esc + 出卡后切走，按卡片去重、归到最先发生的一种，近 7 天。已弃用的 card_closed / polish_closed 计入「点 X」，translation_toggled 计入「设置」。</p>
+        <p className="note">打扰率 = 关掉翻译 + Esc + 出卡后切走，按卡片去重、归到最先发生的一种，{RL}。已弃用的 card_closed / polish_closed 计入「点 X」，translation_toggled 计入「设置」。</p>
         <div className="kpis">
-          <Kpi big label="打扰率（近 7 天）" ready={disruptReady} need={NEED_DISRUPT}
+          <Kpi big label={`打扰率（${RL}）`} ready={disruptReady} need={NEED_DISRUPT}
             value={allDisrupt ? pct(offAll(allDisrupt) + allDisrupt.esc + allDisrupt.away, allDisrupt.shown) : "–"} />
           <Kpi label="关掉翻译率" ready={turnedOff && has("card_shown", "card_id")} need="translation_turned_off、card_shown.card_id"
             value={allDisrupt ? pct(offAll(allDisrupt), allDisrupt.shown) : "–"}
@@ -403,7 +540,7 @@ export default async function Page({ searchParams }: { searchParams: { platform?
             value={pct(q4.currentlyOff.translate_off, q4.currentlyOff.translate_n)}
             note={has("input_time_daily", "polish_on") ? `润色：${pct(q4.currentlyOff.polish_off, q4.currentlyOff.polish_n)}` : undefined} />
           <Kpi label="X 关闭率 ≥ 30% 的设备占比" value={pct(q4.xPerDevice.annoyed, q4.xPerDevice.devices)} ready={turnedOff || has("card_closed")} need="translation_turned_off"
-            note={`近 7 天展示 ≥ 10 张卡的设备；每人中位数 ${pctOf(q4.xPerDevice.p50)}，p90 ${pctOf(q4.xPerDevice.p90)}`} />
+            note={`${RL}展示 ≥ 10 张卡的设备；每人中位数 ${pctOf(q4.xPerDevice.p50)}，p90 ${pctOf(q4.xPerDevice.p90)}`} />
         </div>
         <div className="grid">
           <section><h4>重新打开前的时长（按关闭方式）</h4>
@@ -464,10 +601,10 @@ export default async function Page({ searchParams }: { searchParams: { platform?
             <p className="note">按小时汇总，按按键数加权平均。</p></section>
           <section><h4>关掉翻译 / 润色的设备（当前状态）</h4>
             <Bars rows={q4.toggledOff} ready={turnedOff || has("translation_toggled")} need="translation_turned_off / translation_turned_on" /></section>
-          <section><h4>替换失败（近 7 天，失败率 {pct(q4.replaceTotal.failed, q4.replaceTotal.total)}）</h4>
+          <section><h4>替换失败（{RL}，失败率 {pct(q4.replaceTotal.failed, q4.replaceTotal.total)}）</h4>
             <Bars rows={q4.replaceFailures} />
             {!has("card_replaced", "app_category") && <p className="note">按应用类别拆分：<Pending need="card_replaced.app_category" /></p>}</section>
-          <section><h4>每千打字分钟崩溃次数（按版本，近 14 天）</h4>
+          <section><h4>每千打字分钟崩溃次数（按版本，{RL}）</h4>
             {!(has("ime_restarted") && has("input_time_daily", "youdao_typing_min")) ? <PendingBlock need="ime_restarted、input_time_daily.youdao_typing_min" /> : (
               <table>
                 <thead><tr><th scope="col">版本</th><th scope="col">崩溃</th><th scope="col">打字分钟</th><th scope="col">每千分钟</th></tr></thead>
@@ -527,10 +664,10 @@ export default async function Page({ searchParams }: { searchParams: { platform?
         <div className="kpis">
           <Kpi label="「学会」率（高亮后 14 天内自己打出来）" value={pct(q5.learned.typed, q5.learned.highlighted)}
             ready={has("word_first_highlighted") && has("word_typed_back")} need="word_first_highlighted、word_typed_back" />
-          <Kpi label="人均生词本新增（近 7 天）" value={q5.wordBook.devices > 0 ? (q5.wordBook.added / q5.wordBook.devices).toFixed(1) : "–"}
+          <Kpi label={`人均生词本新增（${RL}）`} value={q5.wordBook.devices > 0 ? (q5.wordBook.added / q5.wordBook.devices).toFixed(1) : "–"}
             ready={has("word_added_to_book")} need="word_added_to_book" />
           <Kpi label="复习答「认识」的比例" value={pct(q5.wordBook.known, q5.wordBook.reviewed)} ready={has("word_reviewed")} need="word_reviewed" />
-          <Kpi label="「只学不翻」设备（近 7 天）" value={q5.learnNotTranslate.n} note={`占有上报设备 ${pct(q5.learnNotTranslate.n, q5.learnNotTranslate.den)}`} />
+          <Kpi label={`「只学不翻」设备（${RL}）`} value={q5.learnNotTranslate.n} note={`占有上报设备 ${pct(q5.learnNotTranslate.n, q5.learnNotTranslate.den)}`} />
           <Kpi label="「只学不翻」的第 14 天主力留存" value="–" ready={false} need={NEED_DAILY} />
         </div>
       </Question>

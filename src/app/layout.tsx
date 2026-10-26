@@ -7,7 +7,7 @@ const css = `
 @media (prefers-color-scheme: dark) { :root { --ink:#e6edf3; --muted:#9198a1; --line:#3d444d; --bar:#4493f8; --bg:#0d1117; --card:#151b23; --pend:#d29922; --pendbg:#2d2410; } }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: var(--ink); background: var(--bg); }
-main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px 16px 64px; }
 h1 { font-size: 20px; margin: 0 0 4px; }
 h2 { font-size: 15px; margin: 32px 0 8px; }
 .sub { color: var(--muted); margin: 0 0 16px; }
@@ -44,6 +44,31 @@ h4 { font-size: 13px; margin: 16px 0 6px; font-weight: 600; }
 td small { color: var(--muted); }
 tr.warn td { color: #cf222e; }
 .curve { width: 100%; max-width: 480px; height: auto; }
+.curve.wide { max-width: 960px; }
+.overview { margin: 4px 0 8px; }
+.counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
+.count { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.count span { color: var(--muted); font-size: 12px; width: 100%; }
+.count b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+@media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, 1fr); } .counts { grid-template-columns: repeat(2, 1fr); } }
+.tile { display: block; color: inherit; text-decoration: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.tile:hover, .tile:focus-visible { border-color: var(--bar); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--bar) 30%, transparent); }
+.tile h2 { font-size: 13px; margin: 0 0 4px; }
+.tile .qn { font-size: 11px; margin-right: 6px; }
+.tm { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 6px; padding: 3px 0; border-top: 1px dashed var(--line); }
+.tm:first-of-type { border-top: 0; }
+.tm .tl { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+.tm b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.tm .pending { grid-column: 1 / -1; justify-self: start; }
+.tm .delta { grid-column: 1 / -1; }
+.spark { width: 72px; height: 20px; }
+.spark polyline { fill: none; stroke: var(--bar); stroke-width: 1.5; }
+.delta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.delta.up { color: #1a7f37; }
+.delta.down { color: #cf222e; }
+.filters small.note { margin: 0 0 0 8px; }
+
 .curve text { font-size: 10px; fill: var(--muted); }
 .curve .grid { stroke: var(--line); }
 .curve polyline { fill: none; stroke-width: 2.5; }
