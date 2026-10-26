@@ -85,14 +85,10 @@ export async function loadStats(f: Filters) {
       SELECT (props->>'day')::date AS day, count(DISTINCT device_id) AS n FROM ev
       WHERE name = 'input_time_daily' AND props ? 'day' AND coalesce((props->>'commits')::int, 0) >= 1 GROUP BY 1
     )
-    SELECT to_char(d.day, 'MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
       coalesce(seen.n, 0)::int AS seen, coalesce(act.n, 0)::int AS active, coalesce(c.shown, 0)::int AS shown,
       coalesce(c.adopted, 0)::int AS adopted, coalesce(c.glanced, 0)::int AS glanced
     FROM d LEFT JOIN seen USING (day) LEFT JOIN act USING (day) LEFT JOIN c USING (day) ORDER BY d.day`);
-  const devicesByPeriod = await q<{ period: string; n: number }>(`
-    SELECT CASE WHEN ${DAY} > ${TODAY} - ${R} THEN 'cur' ELSE 'prev' END AS period, count(DISTINCT device_id)::int AS n
-    FROM ${EV(R2 + 1)} e WHERE ${DAY} > ${TODAY} - ${R2} GROUP BY 1`);
-
   // ---------- 基础数据: one row per day over both periods ----------
   // Until input_time_daily arrives, "active" falls back to any report that day.
   const officialActive = (presence.input_time_daily ?? []).includes("commits");
@@ -159,7 +155,7 @@ export async function loadStats(f: Filters) {
         sum(coalesce(en, 0)) AS en, count(*) FILTER (WHERE t_has) AS t_n, count(*) FILTER (WHERE t_off) AS t_off
       FROM td WHERE coalesce(commits, 0) >= 1 GROUP BY 1
     )
-    SELECT to_char(d.day, 'MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
       (SELECT count(*) FROM cohort c WHERE c.d0 = d.day)::int AS inst_new,
       (SELECT count(*) FROM cohort c WHERE c.d0 <= d.day)::int AS inst_cum,
       (SELECT count(*) FROM cohort c JOIN imp USING (device_id) WHERE c.d0 = d.day)::int AS imported,
@@ -186,7 +182,7 @@ export async function loadStats(f: Filters) {
         count(*) FILTER (WHERE kind = 'survey') AS survey
       FROM samples WHERE received_at >= now() - interval '${R2 + 1} days' ${scope} GROUP BY 1
     )
-    SELECT to_char(d.day, 'MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
       coalesce(s.zh_en, 0)::int AS zh_en, coalesce(s.polish, 0)::int AS polish, coalesce(s.survey, 0)::int AS survey
     FROM d LEFT JOIN s USING (day) ORDER BY d.day`);
   const [sampleTotals] = await q<{ stored: number; devices: number; deletions: number }>(`
@@ -241,19 +237,36 @@ export async function loadStats(f: Filters) {
     GROUP BY GROUPING SETS ((${COHORT}, w.k), (w.k))
     ORDER BY week DESC NULLS FIRST, w.k`);
 
-  // Each cohort's window counts on the day it closed (install day + window end + 1).
-  const retentionDone = await q<{ day: string; cur: boolean; k: number; den: number; active: number; main: number }>(`
+  // Day cohorts over the range. `done`: the window has closed (its last day is over).
+  // Install cohort: installed on that day, active anywhere in the window (as above).
+  // Until input_time_daily arrives, "active" is any report that day.
+  const ACT = `act AS (${officialActive
+    ? `SELECT DISTINCT device_id, day FROM daily d WHERE ${activeCond}`
+    : `SELECT DISTINCT device_id, ${DAY} AS day FROM ev`}),`;
+  const installDaily = await q<{ day: string; k: number; done: boolean; den: number; active: number; main: number }>(`
     WITH ${RET_CTE}
-    w(k, lo, hi) AS (VALUES (1, 1, 1), (7, 7, 9))
-    SELECT to_char(c.d0 + w.hi + 1, 'MM-DD') AS day, c.d0 + w.hi + 1 > ${TODAY} - ${R} AS cur, w.k,
-      count(*)::int AS den,
-      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM daily d WHERE d.device_id = c.device_id
-        AND d.day - c.d0 BETWEEN w.lo AND w.hi AND ${activeCond}))::int AS active,
-      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM daily d WHERE d.device_id = c.device_id
+    ${ACT}
+    w(k, lo, hi) AS (VALUES (1, 1, 1), (3, 3, 4), (7, 7, 9), (14, 14, 16)),
+    dd AS (SELECT generate_series(${TODAY} - ${R - 1}, ${TODAY}, '1 day')::date AS day)
+    SELECT to_char(dd.day, 'YYYY-MM-DD') AS day, w.k, ${TODAY} - dd.day > w.hi AS done,
+      count(c.device_id)::int AS den,
+      count(c.device_id) FILTER (WHERE EXISTS (SELECT 1 FROM act a WHERE a.device_id = c.device_id
+        AND a.day - c.d0 BETWEEN w.lo AND w.hi))::int AS active,
+      count(c.device_id) FILTER (WHERE EXISTS (SELECT 1 FROM daily d WHERE d.device_id = c.device_id
         AND d.day - c.d0 BETWEEN w.lo AND w.hi AND coalesce(d.chars, 0) >= 200 AND coalesce(d.away, 0) <= 1))::int AS main
-    FROM cohort c CROSS JOIN w
-    WHERE ${TODAY} - c.d0 > w.hi AND c.d0 + w.hi + 1 > ${TODAY} - ${R2}
-    GROUP BY c.d0 + w.hi + 1, w.k ORDER BY c.d0 + w.hi + 1`);
+    FROM dd CROSS JOIN w LEFT JOIN cohort c ON c.d0 = dd.day
+    GROUP BY dd.day, w.k, w.hi ORDER BY dd.day, w.k`);
+  // Active cohort: active on that day, active again exactly k days later.
+  const activeDaily = await q<{ day: string; k: number; done: boolean; den: number; ret: number }>(`
+    WITH ${RET_CTE}
+    ${ACT}
+    w(k) AS (VALUES (1), (3), (7)),
+    dd AS (SELECT generate_series(${TODAY} - ${R - 1}, ${TODAY}, '1 day')::date AS day)
+    SELECT to_char(dd.day, 'YYYY-MM-DD') AS day, w.k, ${TODAY} - dd.day > w.k AS done,
+      count(a.device_id)::int AS den,
+      count(a.device_id) FILTER (WHERE EXISTS (SELECT 1 FROM act b WHERE b.device_id = a.device_id AND b.day = a.day + w.k))::int AS ret
+    FROM dd CROSS JOIN w LEFT JOIN act a ON a.day = dd.day
+    GROUP BY dd.day, w.k ORDER BY dd.day, w.k`);
 
   const activeTrend = await q<{ label: string; active: number; main: number }>(`
     WITH d AS (SELECT generate_series(${TODAY} - ${R - 1}, ${TODAY}, '1 day')::date AS day),
@@ -402,10 +415,7 @@ export async function loadStats(f: Filters) {
     SELECT to_char(day, 'MM-DD') AS label, ${MEDIANS} FROM t GROUP BY day ORDER BY day DESC`);
   const hitSeries = await q<Typing & { day: string }>(`
     WITH ${TYPING(R2 + 1)}
-    SELECT to_char(day, 'MM-DD') AS day, ${MEDIANS} FROM t WHERE day > ${TODAY} - ${R2} GROUP BY t.day ORDER BY t.day`);
-  const hitByPeriod = await q<Typing & { cur: boolean }>(`
-    WITH ${TYPING(R2 + 1)}
-    SELECT day > ${TODAY} - ${R} AS cur, ${MEDIANS} FROM t WHERE day > ${TODAY} - ${R2} GROUP BY 1`);
+    SELECT to_char(day, 'YYYY-MM-DD') AS day, ${MEDIANS} FROM t WHERE day > ${TODAY} - ${R2} GROUP BY t.day ORDER BY t.day`);
   const typingByPlatform = await q<Typing & { label: string }>(`
     WITH ${TYPING(R)}, dp AS (${DEVICE_PLATFORM})
     SELECT dp.platform AS label, ${MEDIANS} FROM t JOIN dp USING (device_id) GROUP BY 1 ORDER BY 1`);
@@ -606,7 +616,7 @@ export async function loadStats(f: Filters) {
     FROM s LEFT JOIN fst f USING (cid) WHERE s.day > ${TODAY} - ${R} GROUP BY s.day ORDER BY s.day DESC`);
   const disruptSeries = await q<Disrupt & { day: string; cur: boolean }>(`
     WITH ${DISRUPT_W(R2 + 1)}
-    SELECT to_char(s.day, 'MM-DD') AS day, s.day > ${TODAY} - ${R} AS cur, ${DISRUPT_COLS}
+    SELECT to_char(s.day, 'YYYY-MM-DD') AS day, s.day > ${TODAY} - ${R} AS cur, ${DISRUPT_COLS}
     FROM s LEFT JOIN fst f USING (cid) WHERE s.day > ${TODAY} - ${R2} GROUP BY s.day ORDER BY s.day`);
   const [legacyEsc] = await q<{ shown: number; esc: number }>(`
     SELECT count(*) FILTER (WHERE name = 'card_shown')::int AS shown,
@@ -884,7 +894,7 @@ export async function loadStats(f: Filters) {
 
   return {
     range: R,
-    ov: { series, devicesByPeriod, retentionDone, hitSeries, hitByPeriod, disruptSeries, basics, verDist, officialActive, sampleDays, sampleTotals },
+    ov: { series, installDaily, activeDaily, hitSeries, disruptSeries, basics, verDist, officialActive, sampleDays, sampleTotals },
     presence, meta, overview, cohorts: cohorts.n,
     q1: { retention, cohortRows, activeTrend, daily, charsDist, awayDist, enDominant, enByApp, awayTime, toKinds, activeEnglish, survey },
     q2: { typing, typingByDay, typingByPlatform, typingByApp, typingBySinceInstall, typingByImport, struggle,

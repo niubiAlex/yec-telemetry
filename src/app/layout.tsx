@@ -62,11 +62,30 @@ tr.warn td { color: #cf222e; }
 .tm b { font-size: 20px; font-variant-numeric: tabular-nums; }
 .tm .pending { grid-column: 1 / -1; justify-self: start; }
 .tm .delta { grid-column: 1 / -1; }
-.spark { width: 72px; height: 20px; }
-.spark polyline { fill: none; stroke: var(--bar); stroke-width: 1.5; }
 .delta { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .delta.up { color: #1a7f37; }
 .delta.down { color: #cf222e; }
+.delta.muted { opacity: .6; font-style: italic; }
+.tile, .count, .bc { position: relative; }
+.tile > summary, .count > summary, .bc > summary { list-style: none; cursor: pointer; }
+.tile > summary::-webkit-details-marker, .count > summary::-webkit-details-marker, .bc > summary::-webkit-details-marker { display: none; }
+.count > summary { display: flex; flex-direction: column; gap: 2px; }
+.count .tl { color: var(--muted); font-size: 12px; }
+.count[open], .bc[open] { border-color: var(--bar); }
+.dv { display: flex; align-items: flex-end; gap: 6px; min-width: 0; }
+.dv b { white-space: nowrap; }
+.bars { flex: 1; min-width: 40px; max-width: 120px; height: 18px; }
+.bars rect { fill: color-mix(in srgb, var(--bar) 35%, transparent); }
+.bars rect.hit { fill: transparent; }
+.bars rect.sel { fill: var(--bar); }
+.bars g:hover rect:not(.hit) { fill: #bf3989; }
+.dt { position: absolute; z-index: 10; top: 100%; left: 0; margin-top: 4px; background: var(--card); border: 1px solid var(--bar);
+  border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.15); max-height: 360px; overflow: auto; padding: 4px; min-width: 100%; }
+.dt.right { left: auto; right: 0; }
+.dt table { font-size: 12px; }
+tr.sel td { background: color-mix(in srgb, var(--bar) 12%, transparent); font-weight: 600; }
+.more { float: right; font-size: 11px; font-weight: 400; color: var(--bar); text-decoration: none; }
+form.filters select, form.filters button { font: inherit; font-size: 13px; }
 .filters small.note { margin: 0 0 0 8px; }
 .basics { margin-top: 8px; }
 .basics h2 { font-size: 13px; margin: 0 0 4px; }
@@ -75,15 +94,9 @@ tr.warn td { color: #cf222e; }
 @media (max-width: 1100px) { .bgrid { grid-template-columns: repeat(4, 1fr); } }
 .bc { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; min-width: 0; cursor: help; }
 .bc .tl { display: block; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bv { display: flex; gap: 8px; }
-.bv span { display: flex; flex-direction: column; min-width: 0; }
-.bv small { color: var(--muted); font-size: 10px; line-height: 1.2; }
-.bv b { font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.3; }
-.bv b small { font-size: 11px; color: #1a7f37; }
-.bf { display: flex; align-items: center; gap: 4px; }
-.bf .spark { width: 40px; height: 14px; flex: none; }
+.bc .dv b { font-size: 15px; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.dv b small { font-size: 11px; color: #1a7f37; }
 .bc .delta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bf .delta { display: inline; }
 .bc .pending { margin: 4px 0 2px; }
 
 .curve text { font-size: 10px; fill: var(--muted); }
