@@ -439,6 +439,30 @@ export default async function Page({ searchParams }: {
     );
   }
 
+  const appTyping = has("typing_stats", "bundle_id");
+  const appCards = has("card_shown", "bundle_id");
+  function AppTable({ rows }: { rows: typeof s.apps.byDevices }) {
+    if (rows.length === 0) return <p className="empty">暂无数据</p>;
+    const pend = (need: string) => <Pending need={need} />;
+    return (
+      <table>
+        <thead><tr><th scope="col">应用</th><th scope="col">活跃设备</th><th scope="col">打字量（字）</th><th scope="col">英文占比</th>
+          <th scope="col">卡片展示</th><th scope="col">采纳率</th><th scope="col">关掉翻译率</th></tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.label}>
+            <td>{r.label === "其他" ? `其他（${r.apps} 个应用）` : <>{r.name ?? r.label} {r.name && <small>{r.label}</small>}</>}</td>
+            <td>{r.devices}</td>
+            <td>{appTyping ? r.chars + r.en : pend("typing_stats.bundle_id")}</td>
+            <td>{appTyping ? pct(r.en, r.chars + r.en) : pend("typing_stats.bundle_id")}</td>
+            <td>{appCards ? r.shown : pend("card_shown.bundle_id")}</td>
+            <td>{appCards ? pct(r.adopted, r.shown) : pend("card_shown.bundle_id")}</td>
+            <td>{appCards ? pct(r.off, r.shown) : pend("card_shown.bundle_id")}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    );
+  }
+
   const outcomes = OUTCOME_ORDER.map((k) => ({ label: k, n: q3.outcomes.find((o) => o.label === k)?.n ?? 0 }));
   const levelRows = (rows: Rate[]) => rows.map((r) => ({ label: `${r.label}：${pct(r.num, r.den)}`, n: r.den }));
 
@@ -761,6 +785,31 @@ export default async function Page({ searchParams }: {
           <Kpi label="「只学不翻」的第 14 天主力留存" value="–" ready={false} need={NEED_DAILY} />
         </div>
       </Question>
+
+      <section id="apps" className="question">
+        <h2>按应用</h2>
+        <p className="sub">
+          前 10 个应用单列，其余合并为「其他」，{RL}。Mac 用 bundle id，Windows 用 exe 文件名（小写）。按类别的拆分仍在问题 1–3 里。
+          活跃设备来自 app_used（每台设备每天每个应用一条）；打字量、英文占比、采纳率、关掉翻译率要等对应事件带上 bundle_id。
+        </p>
+        <h4>按活跃设备排序</h4><AppTable rows={s.apps.byDevices} />
+        <h4>按打字量排序</h4>
+        {appTyping ? <AppTable rows={s.apps.byVolume} /> : <PendingBlock need="typing_stats.bundle_id" />}
+        <div className="grid">
+          <section><h4>app_used 带应用标识的行数（全部历史，按 os_version 判断平台）</h4>
+            {s.apps.coverage.length === 0 ? <p className="empty">暂无数据</p> : (
+              <table>
+                <thead><tr><th scope="col">平台</th><th scope="col">app_used 行</th><th scope="col">带 bundle_id</th>
+                  <th scope="col">带 app_name</th><th scope="col">设备</th><th scope="col">不同应用</th></tr></thead>
+                <tbody>{s.apps.coverage.map((r) => (
+                  <tr key={r.platform}><td>{r.platform === "windows" ? "Windows" : "Mac"}</td><td>{r.rows}</td><td>{r.bundle}</td>
+                    <td>{r.name}</td><td>{r.devices}</td><td>{r.apps}</td></tr>
+                ))}</tbody>
+              </table>
+            )}
+            <p className="note">Mac 0.2.x 的 app_used 只发类别，不带 bundle_id / app_name。</p></section>
+        </div>
+      </section>
 
       <section id="ops">
         <h2>运行情况</h2>

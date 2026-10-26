@@ -810,6 +810,69 @@ export async function loadStats(f: Filters) {
     SELECT count(*) FILTER (WHERE learn >= 3 AND (shown = 0 OR adopted::float / nullif(shown, 0) < 0.2))::int AS n,
       count(*)::int AS den FROM per`);
 
+  // ---------- 按应用 ----------
+  // An app is its bundle_id (Mac) or lowercased exe name (Windows). Devices come
+  // from app_used; cards and typing need bundle_id on their own events.
+  type AppRow = { label: string; name: string | null; apps: number; devices: number; chars: number; en: number;
+    shown: number; adopted: number; off: number };
+  const appView = (order: "devices" | "volume") => q<AppRow>(`
+    WITH au AS (
+      SELECT device_id, lower(props->>'bundle_id') AS app, props->>'app_name' AS name
+      FROM ${EV(R)} e WHERE name = 'app_used' AND props ? 'bundle_id'
+    ),
+    ty AS (
+      SELECT device_id, lower(props->>'bundle_id') AS app,
+        coalesce((props->>'chars')::int, 0) AS chars, coalesce((props->>'en_chars')::int, 0) AS en
+      FROM ${EV(R)} e WHERE name = 'typing_stats' AND props ? 'bundle_id'
+    ),
+    cs AS (
+      SELECT props->>'card_id' AS cid, max(lower(props->>'bundle_id')) AS app
+      FROM ${EV(R)} e WHERE name = 'card_shown' AND props ? 'bundle_id' AND props ? 'card_id' GROUP BY 1
+    ),
+    co AS (
+      SELECT coalesce(props->>'card_id', props->>'recent_card_id') AS cid,
+        bool_or(name = 'card_replaced' AND ${OK}) AS adopted,
+        bool_or(name IN ('translation_turned_off', 'card_closed')
+          OR (name = 'translation_toggled' AND (props->>'on')::boolean = false)) AS off
+      FROM ${EV(R + 1)} e WHERE name IN ('card_replaced', 'translation_turned_off', 'card_closed', 'translation_toggled')
+      GROUP BY 1
+    ),
+    apps AS (SELECT app FROM au UNION SELECT app FROM ty UNION SELECT app FROM cs),
+    score AS (
+      SELECT a.app, (SELECT count(DISTINCT device_id) FROM au WHERE au.app = a.app) AS devices,
+        (SELECT coalesce(sum(chars + en), 0) FROM ty WHERE ty.app = a.app) AS volume
+      FROM apps a
+    ),
+    lab AS (
+      SELECT app, r, CASE WHEN r <= 10 AND ${order} > 0 THEN app ELSE '其他' END AS label
+      FROM (SELECT app, devices, volume, row_number() OVER (ORDER BY ${order} DESC, devices DESC, app) AS r FROM score) x
+    ),
+    nm AS (
+      SELECT DISTINCT ON (app) app, name FROM au WHERE name IS NOT NULL GROUP BY app, name ORDER BY app, count(*) DESC
+    ),
+    dv AS (SELECT label, count(DISTINCT device_id) AS devices FROM au JOIN lab USING (app) GROUP BY 1),
+    tv AS (SELECT label, sum(chars) AS chars, sum(en) AS en FROM ty JOIN lab USING (app) GROUP BY 1),
+    cv AS (
+      SELECT label, count(*) AS shown, count(*) FILTER (WHERE co.adopted) AS adopted, count(*) FILTER (WHERE co.off) AS off
+      FROM cs JOIN lab USING (app) LEFT JOIN co USING (cid) GROUP BY 1
+    ),
+    g AS (SELECT label, min(r) AS r, count(*) AS apps, max(nm.name) AS name FROM lab LEFT JOIN nm USING (app) GROUP BY 1)
+    SELECT g.label, CASE WHEN g.label = '其他' THEN NULL ELSE g.name END AS name, g.apps::int,
+      coalesce(dv.devices, 0)::int AS devices, coalesce(tv.chars, 0)::int AS chars, coalesce(tv.en, 0)::int AS en,
+      coalesce(cv.shown, 0)::int AS shown, coalesce(cv.adopted, 0)::int AS adopted, coalesce(cv.off, 0)::int AS off
+    FROM g LEFT JOIN dv USING (label) LEFT JOIN tv USING (label) LEFT JOIN cv USING (label)
+    ORDER BY g.label = '其他', g.r`);
+  const appsByDevices = await appView("devices");
+  const appsByVolume = await appView("volume");
+  // Every app_used row ever, by the platform os_version implies.
+  const appCoverage = await q<{ platform: string; rows: number; bundle: number; name: number; devices: number; apps: number }>(`
+    SELECT CASE WHEN b.os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END AS platform,
+      count(*)::int AS rows, count(*) FILTER (WHERE e.props ? 'bundle_id')::int AS bundle,
+      count(*) FILTER (WHERE e.props ? 'app_name')::int AS name,
+      count(DISTINCT e.device_id) FILTER (WHERE e.props ? 'bundle_id')::int AS devices,
+      count(DISTINCT lower(e.props->>'bundle_id'))::int AS apps
+    FROM events e JOIN batches b USING (batch_id) WHERE e.name = 'app_used' GROUP BY 1 ORDER BY 1`);
+
   // ---------- 运行情况 ----------
   const versions = await q<Count>(`
     SELECT platform || ' · ' || app_version AS label, count(*)::int AS n FROM (
@@ -830,6 +893,7 @@ export async function loadStats(f: Filters) {
       errorCodes, polish, polishLatency },
     q4: { disrupt, disruptByDay, legacyEsc, xPerDevice, reopen, neverReopened, currentlyOff, keyLatency, toggledOff, replaceTotal, replaceFailures, crashes },
     q5: { weeks, officialLearning, learnBuckets, learnMedian, learnByType, learnByLevel, learned, wordBook, learnNotTranslate },
+    apps: { byDevices: appsByDevices, byVolume: appsByVolume, coverage: appCoverage },
     versions,
   };
 }

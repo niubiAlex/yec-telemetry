@@ -29,10 +29,26 @@ describe("parseBatch", () => {
       { name: "card_dismissed", ts: NOW, props: { tone: "Let's move it to next week" } },
       { name: "sentence_latency", ts: NOW, props: { ms: 900, ok: false, error_code: "HTTP 403: key sk-abc" } },
       { name: "app_used", ts: NOW, props: { bundle_id: "com.x/../y", app_name: "a\nb" } },
+      { name: "app_used", ts: NOW, props: { bundle_id: "C:\\Windows\\notepad.exe" } },
+      { name: "app_used", ts: NOW, props: { bundle_id: "https://x.y" } },
+      { name: "app_used", ts: NOW, props: { bundle_id: " . " } },
     ]), NOW);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.batch.events.map((e) => e.props)).toEqual([{ tone: "chat" }, {}, { ms: 900, ok: false }, {}]);
+    expect(r.batch.events.map((e) => e.props)).toEqual([{ tone: "chat" }, {}, { ms: 900, ok: false }, {}, {}, {}, {}]);
+  });
+
+  it("accepts Windows exe names as bundle_id, on app_used and the per-app events", () => {
+    const exes = ["WeChat.exe", "foo_bar (x64).exe", "微信.exe", "Notepad++.exe"];
+    const r = parseBatch(envelope([
+      ...exes.map((b) => ({ name: "app_used", ts: NOW, props: { bundle_id: b, app_name: "X" } })),
+      { name: "card_shown", ts: NOW, props: { tone: "chat", bundle_id: "WeChat.exe" } },
+      { name: "typing_stats", ts: NOW, props: { chars: 10, bundle_id: "com.tencent.xinWeChat" } },
+    ]), NOW);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.batch.events.slice(0, 4).map((e) => e.props.bundle_id)).toEqual(exes);
+    expect(r.batch.events[4].props).toEqual({ tone: "chat", bundle_id: "WeChat.exe" });
+    expect(r.batch.events[5].props).toEqual({ chars: 10, bundle_id: "com.tencent.xinWeChat" });
   });
 
   it("keeps the onboarding events' source and page", () => {

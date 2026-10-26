@@ -50,7 +50,10 @@ const PROP: Record<string, Check> = {
   fail_reason: code(/^[a-z0-9_.-]{1,40}$/),
   error_code: code(/^[a-z0-9_.-]{1,40}$/),
   ms: int(0, 120_000),
-  bundle_id: code(/^[A-Za-z0-9.-]{1,128}$/),
+  // A Mac bundle id ("com.tencent.xinWeChat") or a Windows exe file name
+  // ("WeChat.exe", "Foo_Bar (x64).exe", "微信.exe"). No slash, backslash or
+  // colon, so it can never hold a path or a URL.
+  bundle_id: code(/^(?=.*[\p{L}\p{N}])[\p{L}\p{N}._+() -]{1,128}$/u),
   // An app's display name ("微信"). Short, no control characters.
   app_name: (v) => typeof v === "string" && v.trim().length > 0 && v.length <= 64 && !/[\u0000-\u001f\u007f]/.test(v),
   kind: (v) => v === "english" || v === "new_word",
@@ -163,8 +166,8 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   input_source_added: [],
   daily_active: [],
   app_used: ["bundle_id", "app_name", "app_category"],
-  card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger"],
-  card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket"],
+  card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger", "bundle_id"],
+  card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket", "bundle_id"],
   // Esc only; the X button sends translation_turned_off.
   card_dismissed: ["tone", "card_id"],
   // Reserved: a card skipped by typing on, once the client splits it from Esc.
@@ -198,15 +201,15 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   survey_shown: ["survey", "attempt"],
   survey_answered: ["survey", "answer", "has_comment"],
   survey_dismissed: ["survey", "attempt"],
-  // 2 只打中文: hourly totals per app category.
-  typing_stats: ["app_category", "commits", "first_hit", "keys", "chars", "abandoned", "paged", "expanded",
+  // 2 只打中文: hourly totals per app category, or per app when bundle_id is set.
+  typing_stats: ["app_category", "bundle_id", "commits", "first_hit", "keys", "chars", "abandoned", "paged", "expanded",
     "backspaces", "en_commits", "en_chars"],
   user_word_added: ["entry"],
   // 3 翻译准不准
-  card_glanced: ["card_id", "tone", "app_category", "len_bucket"],
+  card_glanced: ["card_id", "tone", "app_category", "len_bucket", "bundle_id"],
   card_edited_after_replace: ["card_id", "tone", "edit_pct"],
   card_feedback: ["card_id", "tone", "vote", "reason"],
-  polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger"],
+  polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger", "bundle_id"],
   polish_accepted: ["card_id", "method", "ok", "fail_reason"],
   // Deprecated: superseded by translation_turned_off (feature=polish).
   polish_closed: ["card_id", "reason"],
@@ -217,7 +220,7 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   polish_latency: ["card_id", "ms", "ok", "error_code"],
   // 4 打扰
   // X, the on/off shortcut or Settings: cards stay off until turned back on.
-  translation_turned_off: ["feature", "source", "scope", "card_id", "recent_card_id", "tone", "app_category"],
+  translation_turned_off: ["feature", "source", "scope", "card_id", "recent_card_id", "tone", "app_category", "bundle_id"],
   translation_turned_on: ["feature", "source", "scope", "app_category", "off_min"],
   // Deprecated: superseded by translation_turned_off / translation_turned_on.
   card_closed: ["card_id", "tone", "reason", "app_category"],
