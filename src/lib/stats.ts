@@ -803,31 +803,41 @@ export async function loadStats(f: Filters) {
     FROM m FULL JOIN c USING (app_version) ORDER BY label DESC LIMIT 10`);
 
   // ---------- 5 学习 ----------
-  // Official denominator: active (>= 1 commit via 有道) that week. Until
-  // clients send input_time_daily the page also shows an interim one: any event that week.
+  // Denominator: devices active on at least one day that week. Active is decided
+  // per device-day: >= 1 commit when that day has input_time_daily, else any report
+  // that day (fb: active that week only through such days). `seen` (any report that
+  // week) is shown alongside for reference.
   const WEEKS = `
     ev AS ${EV(70)},
     inter AS (
       SELECT device_id, date_trunc('week', ${DAY})::date AS w, count(*)::int AS n
       FROM ev WHERE name IN (${LEARNING_IN}) GROUP BY 1, 2
     ),
-    act AS (
-      SELECT DISTINCT device_id, date_trunc('week', (props->>'day')::date)::date AS w
-      FROM ev WHERE name = 'input_time_daily' AND props ? 'day' AND coalesce((props->>'commits')::int, 0) >= 1
+    td AS (
+      SELECT device_id, (props->>'day')::date AS day, max((props->>'commits')::int) AS commits
+      FROM ev WHERE name = 'input_time_daily' AND props ? 'day' GROUP BY 1, 2
     ),
+    sd AS (SELECT DISTINCT device_id, ${DAY} AS day FROM ev),
+    ad AS (
+      SELECT device_id, day, false AS fb FROM td WHERE commits >= 1
+      UNION ALL
+      SELECT sd.device_id, sd.day, true FROM sd LEFT JOIN td USING (device_id, day) WHERE td.commits IS NULL
+    ),
+    act AS (SELECT device_id, date_trunc('week', day)::date AS w, bool_and(fb) AS fb FROM ad GROUP BY 1, 2),
     seen AS (SELECT DISTINCT device_id, date_trunc('week', ${DAY})::date AS w FROM ev),
     lw AS (SELECT (date_trunc('week', ${TODAY}) - interval '7 days')::date AS w)`;
-  const weeks = await q<{ label: string; current: boolean; act: number; act_learn: number; seen: number; seen_learn: number }>(`
+  const weeks = await q<{ label: string; current: boolean; act: number; act_fb: number; act_learn: number; seen: number; seen_learn: number }>(`
     WITH ${WEEKS},
     wk AS (SELECT generate_series(date_trunc('week', ${TODAY}) - interval '8 weeks', date_trunc('week', ${TODAY}), '1 week')::date AS w)
     SELECT to_char(wk.w, 'YYYY-MM-DD') AS label, wk.w = date_trunc('week', ${TODAY})::date AS current,
       (SELECT count(*) FROM act a WHERE a.w = wk.w)::int AS act,
+      (SELECT count(*) FROM act a WHERE a.w = wk.w AND a.fb)::int AS act_fb,
       (SELECT count(*) FROM act a JOIN inter i USING (device_id, w) WHERE a.w = wk.w)::int AS act_learn,
       (SELECT count(*) FROM seen s WHERE s.w = wk.w)::int AS seen,
       (SELECT count(*) FROM seen s JOIN inter i USING (device_id, w) WHERE s.w = wk.w)::int AS seen_learn
     FROM wk ORDER BY wk.w DESC`);
   const officialLearning = (presence.input_time_daily ?? []).includes("commits");
-  const BASE = officialLearning ? "act" : "seen";
+  const BASE = "act";
   const learnBuckets = await q<Count>(`
     WITH ${WEEKS}
     SELECT label, count(*)::int AS n FROM (

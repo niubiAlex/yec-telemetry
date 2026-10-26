@@ -922,27 +922,30 @@ export default async function Page({ searchParams }: {
       <Question n={5} title="学习提示有没有独立价值" ask="主动的学习互动才算：点生词、点释义、点回顾、加生词本、开小词典、开学习面板、标已认识、复习。只看到高亮不算。">
         <h3>关键指标：学习功能周渗透率</h3>
         <p className="note">
-          分子：这一周至少 1 次学习互动的设备；分母：这一周至少 1 天「活跃」（上屏 ≥ 1 次）的设备。自然周，周一 0 点起。
-          「活跃」要等 input_time_daily；在那之前另列临时口径：分母用这一周有任何上报的设备。
+          分子：这一周至少 1 次学习互动的设备；分母：这一周至少 1 天「活跃」的设备。自然周，周一 0 点起。
+          「活跃」按设备逐天判断：这台设备这一天有 input_time_daily 时看上屏 ≥ 1 次；没有时，当天有任何上报就算活跃。
+          另列参考：分母用这一周有任何上报的设备。
         </p>
         <div className="kpis">
           <Kpi big label={`周渗透率（${lastWeek?.label ?? ""} 那周）`} value={lastWeek ? pct(lastWeek.act_learn, lastWeek.act) : "–"}
-            ready={q5.officialLearning} need="input_time_daily.commits" />
-          <Kpi label="临时口径（分母 = 有上报的设备）" value={lastWeek ? pct(lastWeek.seen_learn, lastWeek.seen) : "–"}
+            note={lastWeek ? `${lastWeek.act_learn} / ${lastWeek.act} 台` + (lastWeek.act_fb ? `，其中 ${lastWeek.act_fb} 台只按有上报算活跃` : "") : undefined} />
+          <Kpi label="参考：分母 = 有上报的设备" value={lastWeek ? pct(lastWeek.seen_learn, lastWeek.seen) : "–"}
             note={lastWeek ? `${lastWeek.seen_learn} / ${lastWeek.seen} 台` : undefined} />
-          <Kpi label="有互动设备的互动次数中位数" value={num(q5.learnMedian.p50)} note={q5.officialLearning ? undefined : "临时口径"} />
+          <Kpi label="有互动设备的互动次数中位数" value={num(q5.learnMedian.p50)} />
         </div>
         <div className="grid">
           <section><h4>逐周趋势</h4>
             <table>
-              <thead><tr><th scope="col">周（周一）</th><th scope="col">渗透率</th><th scope="col">临时口径</th></tr></thead>
+              <thead><tr><th scope="col">周（周一）</th><th scope="col">渗透率</th><th scope="col">只按有上报算活跃</th>
+                <th scope="col">参考：分母 = 有上报</th></tr></thead>
               <tbody>{q5.weeks.map((w) => (
                 <tr key={w.label}><td>{w.label}{w.current ? "（本周）" : ""}</td>
-                  <td>{q5.officialLearning ? `${pct(w.act_learn, w.act)} (${w.act_learn}/${w.act})` : <Pending need="input_time_daily.commits" />}</td>
+                  <td>{pct(w.act_learn, w.act)} <small>({w.act_learn}/{w.act})</small></td>
+                  <td>{w.act_fb} 台</td>
                   <td>{pct(w.seen_learn, w.seen)} <small>({w.seen_learn}/{w.seen})</small></td></tr>
               ))}</tbody>
             </table></section>
-          <section><h4>每人本周互动次数分档（{lastWeek?.label} 那周{q5.officialLearning ? "" : "，临时口径"}）</h4>
+          <section><h4>每人本周互动次数分档（{lastWeek?.label} 那周）</h4>
             <Bars rows={q5.learnBuckets} unit=" 台" label={(b) => `${b} 次`} /></section>
           <section><h4>各类互动（{lastWeek?.label} 那周）</h4>
             <table>
