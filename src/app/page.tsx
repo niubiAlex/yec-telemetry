@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
 import { How } from "./How";
+import { DaySelect } from "./DaySelect";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -560,11 +561,7 @@ export default async function Page({ searchParams }: {
         {rc === "active" && <input type="hidden" name="rc" value="active" />}
         <label htmlFor="day">日期：</label>
         {dayLink(prevDay ?? undefined) ? <a href={dayLink(prevDay ?? undefined) as string}>‹ 前一天</a> : <span className="muted">‹ 前一天</span>}
-        <select id="day" name="day" defaultValue={day}>
-          {[...days].reverse().map((d) => (
-            <option key={d} value={d}>{d}{d === today ? "（今天，未完）" : d === yesterday ? "（昨天）" : ""}</option>
-          ))}
-        </select>
+        <DaySelect key={day} days={days} day={day} today={today} yesterday={yesterday} />
         <button type="submit">看这天</button>
         {dayLink(days[days.indexOf(day) + 1]) ? <a href={dayLink(days[days.indexOf(day) + 1]) as string}>后一天 ›</a> : <span className="muted">后一天 ›</span>}
         <span className="sep">留存格：</span>
