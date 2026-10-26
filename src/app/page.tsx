@@ -401,10 +401,13 @@ export default async function Page({ searchParams }: {
     );
   }
 
-  const interim = ov.officialActive ? undefined : "临时：有上报即算活跃";
-  const ACTIVE_DEF = ov.officialActive ? `活跃 = 当天${strict ? "上屏 ≥ 20 字" : "上屏 ≥ 1 次"}` : "还没有 input_time_daily，暂按当天有上报算活跃";
   const B = ov.basics;
   const bDay = B.find((r) => r.day === day);
+  const fbDay = bDay?.dau_fb ?? 0;
+  const interim = !ov.officialActive ? "临时：有上报即算活跃"
+    : fbDay > 0 ? `其中 ${fbDay} 台当天没有 input_time_daily，按有上报算` : undefined;
+  const retInterim = ov.officialActive ? "没有 input_time_daily 的设备·天按有上报算" : "临时：有上报即算活跃";
+  const ACTIVE_DEF = `活跃按设备逐天判断：这台设备这一天有 input_time_daily 时，看当天${strict ? "上屏 ≥ 20 字" : "上屏 ≥ 1 次"}；没有时，当天有任何上报就算活跃`;
   const sampleN = (r: { zh_en: number; polish: number; survey: number }) => r.zh_en + r.polish + r.survey;
   const samplesReady = ov.sampleTotals.stored > 0 || ov.sampleDays.some((r) => sampleN(r) > 0);
   const sDay = ov.sampleDays.find((r) => r.day === day);
@@ -429,8 +432,8 @@ export default async function Page({ searchParams }: {
     !r.done ? { v: null, base: r.den, detail: `${r.den} 台，第 ${k} 天还没过完` } : { ...rateP(r.ret, r.den) });
   const instTile = (k: number, which: "active" | "main"): DTile => ({
     label: `${which === "main" ? "主力" : "活跃"} · 第 ${k} 天`, pts: instPts(k, which), fmt: fPct, rate: true,
-    ready: which === "main" ? dailyChars : true, need: NEED_DAILY, note: which === "main" ? undefined : interim });
-  const actTile = (k: number): DTile => ({ label: `第 ${k} 天回来`, pts: actPts(k), fmt: fPct, rate: true, ready: true, need: "", note: interim });
+    ready: which === "main" ? dailyChars : true, need: NEED_DAILY, note: which === "main" ? undefined : retInterim });
+  const actTile = (k: number): DTile => ({ label: `第 ${k} 天回来`, pts: actPts(k), fmt: fPct, rate: true, ready: true, need: "", note: retInterim });
   const retItems = rc === "active" ? [1, 3, 7].map(actTile) : [instTile(1, "active"), instTile(7, "active"), instTile(7, "main")];
   const retTable = rc === "active" ? retItems
     : [...WINDOWS.map((k) => instTile(k, "active")), ...WINDOWS.map((k) => instTile(k, "main"))];
@@ -623,7 +626,7 @@ export default async function Page({ searchParams }: {
         </div>
         <h4 id="q1-daily">逐日分组（{RL}，每行一天；时间窗没结束显示「—」）</h4>
         <div className="grid">
-          <section><h4>按安装日：当天安装的设备第 N 天还在{interim ? `（${interim}）` : ""}</h4>
+          <section><h4>按安装日：当天安装的设备第 N 天还在{retInterim ? `（${retInterim}）` : ""}</h4>
             {(
               <table>
                 <thead><tr><th scope="col">安装日</th><th scope="col">设备</th>
@@ -644,7 +647,7 @@ export default async function Page({ searchParams }: {
                 })}</tbody>
               </table>
             )}</section>
-          <section><h4>按当天活跃：当天活跃的设备第 1 / 3 / 7 天回来{interim ? `（${interim}）` : ""}</h4>
+          <section><h4>按当天活跃：当天活跃的设备第 1 / 3 / 7 天回来{retInterim ? `（${retInterim}）` : ""}</h4>
             <table>
               <thead><tr><th scope="col">活跃日</th><th scope="col">设备</th>
                 {[1, 3, 7].map((k) => <th key={k} scope="col">第 {k} 天</th>)}</tr></thead>

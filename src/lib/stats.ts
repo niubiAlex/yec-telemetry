@@ -103,14 +103,14 @@ export async function loadStats(f: Filters) {
       coalesce(c.adopted, 0)::int AS adopted, coalesce(c.glanced, 0)::int AS glanced
     FROM d LEFT JOIN seen USING (day) LEFT JOIN act USING (day) LEFT JOIN c USING (day) ORDER BY d.day`);
   // ---------- 基础数据: one row per day over both periods ----------
-  // Until input_time_daily arrives, "active" falls back to any report that day.
+  // Whether any input_time_daily has arrived; "active" itself falls back per device-day (see `a` / ACT).
   const officialActive = (presence.input_time_daily ?? []).includes("commits");
   const dailyCond = f.strict ? `coalesce(chars, 0) >= 20` : `coalesce(commits, 0) >= 1`;
   const VKEY = `string_to_array(substring(app_version from '^[0-9]+(?:[.][0-9]+)*'), '.')::int[]`;
   const BATCH_DAY = `(received_at AT TIME ZONE 'Asia/Shanghai')::date`;
   const basics = await q<{
     day: string; cur: boolean; inst_new: number; inst_cum: number; imported: number; onb_n: number; onb_done: number;
-    dau: number; wau: number; seen: number; mac: number; ver_n: number; ver_latest: number;
+    dau: number; dau_fb: number; wau: number; seen: number; mac: number; ver_n: number; ver_latest: number;
     dd: number; mins: number; chars: number; en: number; t_n: number; t_off: number;
     cards: number; learn: number; learn_dev: number; crashes: number; api_n: number; api_err: number;
     imp_n: number; imp_off: number;
@@ -138,7 +138,13 @@ export async function loadStats(f: Filters) {
       FROM ev WHERE name = 'input_time_daily' AND props ? 'day' GROUP BY 1, 2
     ),
     act AS (SELECT device_id, day FROM td WHERE ${dailyCond}),
-    a AS (SELECT * FROM ${officialActive ? "act" : "seen"}),
+    -- Per device-day: input_time_daily decides when that day has one, else any report counts (fb).
+    a AS (
+      SELECT device_id, day, false AS fb FROM act
+      UNION ALL
+      SELECT s.device_id, s.day, true FROM seen s LEFT JOIN td USING (device_id, day)
+      WHERE td.commits IS NULL AND td.chars IS NULL
+    ),
     dp AS (${DEVICE_PLATFORM}),
     vb AS (
       SELECT device_id, ${BATCH_DAY} AS day,
@@ -175,6 +181,7 @@ export async function loadStats(f: Filters) {
       (SELECT count(*) FROM onb WHERE onb.day = d.day)::int AS onb_n,
       (SELECT count(*) FROM onb JOIN onb_done USING (device_id) WHERE onb.day = d.day)::int AS onb_done,
       (SELECT count(*) FROM a WHERE a.day = d.day)::int AS dau,
+      (SELECT count(*) FROM a WHERE a.day = d.day AND a.fb)::int AS dau_fb,
       (SELECT count(DISTINCT device_id) FROM a WHERE a.day BETWEEN d.day - 6 AND d.day)::int AS wau,
       (SELECT count(*) FROM seen WHERE seen.day = d.day)::int AS seen,
       (SELECT count(*) FROM seen JOIN dp USING (device_id) WHERE seen.day = d.day AND dp.platform = 'mac')::int AS mac,
@@ -252,10 +259,13 @@ export async function loadStats(f: Filters) {
 
   // Day cohorts over the range. `done`: the window has closed (its last day is over).
   // Install cohort: installed on that day, active anywhere in the window (as above).
-  // Until input_time_daily arrives, "active" is any report that day.
-  const ACT = `act AS (${officialActive
-    ? `SELECT DISTINCT device_id, day FROM daily d WHERE ${activeCond}`
-    : `SELECT DISTINCT device_id, ${DAY} AS day FROM ev`}),`;
+  // Per device-day: input_time_daily decides when that day has one, else any report counts.
+  const ACT = `act AS (
+    SELECT device_id, day FROM daily d WHERE ${activeCond}
+    UNION
+    SELECT s.device_id, s.day FROM (SELECT DISTINCT device_id, ${DAY} AS day FROM ev) s
+      LEFT JOIN daily d USING (device_id, day) WHERE d.commits IS NULL AND d.chars IS NULL
+  ),`;
   const installDaily = await q<{ day: string; k: number; done: boolean; den: number; active: number; main: number }>(`
     WITH ${RET_CTE}
     ${ACT}
