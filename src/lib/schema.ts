@@ -123,6 +123,9 @@ const PROP: Record<string, Check> = {
   result: oneOf("known", "unknown", "skipped"),
   days_since_highlight: int(0, 365),
   how: oneOf("english_mode", "edited_card"),
+  translate_on: bool,
+  polish_on: bool,
+  off_min: int(0, 1_000_000),
 };
 
 // Props whose values depend on the event (`kind`, `entry`, `reason`, ...).
@@ -138,6 +141,8 @@ const EVENT_PROP: Record<string, Record<string, Check>> = {
   ime_restarted: { kind: oneOf("crash", "hang_killed", "system") },
   word_first_highlighted: { kind: oneOf("gloss", "new_word") },
   word_typed_back: { kind: oneOf("gloss", "new_word") },
+  translation_turned_off: { source: oneOf("x_button", "shortcut", "settings") },
+  translation_turned_on: { source: oneOf("x_button", "shortcut", "settings") },
   card_closed: { reason: oneOf("x_button") },
   polish_closed: { reason: oneOf("x_button") },
   card_feedback: { reason: oneOf("wrong_meaning", "unnatural", "wrong_tone", "too_long", "other") },
@@ -147,7 +152,7 @@ const EVENT_PROP: Record<string, Record<string, Check>> = {
 
 const INPUT_TIME_DAILY = [
   "day", "commits", "chars", "chars_en_typed", "chars_en_card", "away_30m", "youdao_typing_min", "away_min",
-  "zh_only_typing_min", "switch_away", "switch_back",
+  "zh_only_typing_min", "switch_away", "switch_back", "translate_on", "polish_on",
   "typing_min_chat", "typing_min_mail", "typing_min_doc", "typing_min_code", "typing_min_other",
 ] as const;
 
@@ -160,7 +165,7 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   app_used: ["bundle_id", "app_name", "app_category"],
   card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger"],
   card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket"],
-  // Esc only; the X button sends card_closed.
+  // Esc only; the X button sends translation_turned_off.
   card_dismissed: ["tone", "card_id"],
   // Reserved: a card skipped by typing on, once the client splits it from Esc.
   card_ignored: ["tone"],
@@ -203,6 +208,7 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   card_feedback: ["card_id", "tone", "vote", "reason"],
   polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger"],
   polish_accepted: ["card_id", "method", "ok", "fail_reason"],
+  // Deprecated: superseded by translation_turned_off (feature=polish).
   polish_closed: ["card_id", "reason"],
   polish_dismissed: ["card_id"],
   polish_undo_after_accept: ["card_id", "method"],
@@ -210,9 +216,13 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   polish_feedback: ["card_id", "vote", "reason"],
   polish_latency: ["card_id", "ms", "ok", "error_code"],
   // 4 打扰
+  // X, the on/off shortcut or Settings: cards stay off until turned back on.
+  translation_turned_off: ["feature", "source", "scope", "card_id", "recent_card_id", "tone", "app_category"],
+  translation_turned_on: ["feature", "source", "scope", "app_category", "off_min"],
+  // Deprecated: superseded by translation_turned_off / translation_turned_on.
   card_closed: ["card_id", "tone", "reason", "app_category"],
-  key_latency: ["count", "p50_us", "p90_us", "p99_us", "max_us"],
   translation_toggled: ["feature", "scope", "on", "app_category", "recent_card_id"],
+  key_latency: ["count", "p50_us", "p90_us", "p99_us", "max_us"],
   // 5 学习
   gloss_clicked: [],
   word_added_to_book: ["entry"],

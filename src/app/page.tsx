@@ -9,7 +9,7 @@ const APP: Record<string, string> = { chat: "聊天", mail: "邮件", doc: "文�
 const LEN: Record<string, string> = { s: "短（≤10 字）", m: "中（11–30）", l: "长（31–80）", xl: "很长（>80）", "?": "未知" };
 const TO_KIND: Record<string, string> = { cjk_ime: "其他中文输入法", latin_layout: "系统英文键盘", other: "其他", "?": "未知" };
 const OUTCOME: Record<string, string> = {
-  adopted: "采纳", undone: "采纳后撤销", edited: "采纳后大改", failed: "出卡失败", closed: "点 X 关闭", esc: "Esc",
+  adopted: "采纳", undone: "采纳后撤销", edited: "采纳后大改", failed: "出卡失败", closed: "关掉翻译", esc: "Esc",
   glanced: "看过未采纳（中性）", none: "没看也没操作（中性）",
 };
 const OUTCOME_ORDER = ["adopted", "undone", "edited", "glanced", "esc", "closed", "failed", "none"];
@@ -18,6 +18,7 @@ const LEARNING: Record<string, string> = {
   dict_opened: "打开小词典", learning_dashboard_opened: "打开学习面板", word_marked_known: "标记已认识", word_reviewed: "复习一个词",
 };
 const NEW_LEARNING = new Set(["gloss_clicked", "word_added_to_book", "learning_dashboard_opened", "word_marked_known", "word_reviewed"]);
+const OFF_SOURCE: Record<string, string> = { x_button: "点 X", shortcut: "开关快捷键", settings: "设置" };
 const REASON: Record<string, string> = {
   wrong_meaning: "意思错了", unnatural: "不自然", wrong_tone: "语气不对", too_long: "太长", other: "其他", 未选: "未选",
 };
@@ -197,9 +198,15 @@ export default async function Page({ searchParams }: { searchParams: { platform?
   const allDisrupt = q4.disrupt.find((r) => r.type === null && r.trig === null);
   const typeDisrupt = q4.disrupt.filter((r) => r.type !== null && r.trig === null);
   const trigDisrupt = q4.disrupt.filter((r) => r.type !== null && r.trig !== null);
-  const disruptReady = has("card_shown", "card_id") && has("card_closed") && has("translation_toggled") && has("ime_deactivated");
+  const turnedOff = has("translation_turned_off");
+  const disruptReady = has("card_shown", "card_id") && turnedOff && has("ime_deactivated");
   const escWithId = has("card_dismissed", "card_id") && has("card_shown", "card_id");
-  const NEED_DISRUPT = "card_shown.card_id、card_closed、translation_toggled、ime_deactivated.recent_card_id";
+  const NEED_DISRUPT = "card_shown.card_id、translation_turned_off、ime_deactivated.recent_card_id";
+  const offAll = (r: { off_x: number; off_shortcut: number; off_settings: number }) => r.off_x + r.off_shortcut + r.off_settings;
+  const reopenAll = q4.reopen.find((r) => r.label === null);
+  const neverAll = q4.neverReopened.find((r) => r.feature === null);
+  const minutes = (v: number | null | undefined) =>
+    v == null ? "–" : v < 60 ? `${Math.round(v)} 分` : v < 1440 ? `${(v / 60).toFixed(1)} 小时` : `${(v / 1440).toFixed(1)} 天`;
 
   const polishAll = q3.polish.find((r) => r.dim === "all");
   const polishReady = has("polish_shown");
@@ -356,7 +363,7 @@ export default async function Page({ searchParams }: { searchParams: { platform?
           <Kpi big label="润色采纳率" value={pct(polishAll?.accepted ?? 0, polishAll?.shown ?? 0)} ready={polishReady} need="polish_shown、polish_accepted" />
           <Kpi label="看过率" value={pct(polishAll?.glanced ?? 0, polishAll?.shown ?? 0)} ready={has("polish_glanced")} need="polish_glanced" />
           <Kpi label="采纳后撤销率" value={pct(polishAll?.undone ?? 0, polishAll?.accepted ?? 0)} ready={has("polish_undo_after_accept")} need="polish_undo_after_accept" />
-          <Kpi label="X 关闭率" value={pct(polishAll?.closed ?? 0, polishAll?.shown ?? 0)} ready={has("polish_closed")} need="polish_closed" />
+          <Kpi label="关闭率" value={pct(polishAll?.closed ?? 0, polishAll?.shown ?? 0)} ready={has("polish_closed") || has("translation_turned_off")} need="translation_turned_off（feature=polish）" />
           <Kpi label="👍 比例" value={pct(polishAll?.up ?? 0, (polishAll?.up ?? 0) + (polishAll?.down ?? 0))} ready={has("polish_feedback")} need="polish_feedback" />
           <Kpi label="出建议耗时 p50 / p90" value={`${ms(s.q3.polishLatency.p50)} / ${ms(s.q3.polishLatency.p90)}`} ready={has("polish_latency")} need="polish_latency" />
         </div>
@@ -370,47 +377,76 @@ export default async function Page({ searchParams }: { searchParams: { platform?
         )}
       </Question>
 
-      <Question n={4} title="会不会干扰正常打字" ask="只有 X 关闭、Esc、关翻译、出卡后切走四种明确的「不想要」算打扰；卡片自己消失不算。">
+      <Question n={4} title="会不会干扰正常打字" ask="只有关掉翻译（点 X、开关快捷键、设置）、Esc、出卡后切走三种明确的「不想要」算打扰；卡片自己消失不算。">
         <h3>关键指标：卡片打扰率</h3>
+        <p className="note">打扰率 = 关掉翻译 + Esc + 出卡后切走，按卡片去重、归到最先发生的一种，近 7 天。已弃用的 card_closed / polish_closed 计入「点 X」，translation_toggled 计入「设置」。</p>
         <div className="kpis">
           <Kpi big label="打扰率（近 7 天）" ready={disruptReady} need={NEED_DISRUPT}
-            value={allDisrupt ? pct(allDisrupt.x + allDisrupt.esc + allDisrupt.off + allDisrupt.away, allDisrupt.shown) : "–"} />
-          <Kpi label="X 关闭率" ready={has("card_closed") && has("card_shown", "card_id")} need="card_closed、card_shown.card_id"
-            value={allDisrupt ? pct(allDisrupt.x, allDisrupt.shown) : "–"} />
+            value={allDisrupt ? pct(offAll(allDisrupt) + allDisrupt.esc + allDisrupt.away, allDisrupt.shown) : "–"} />
+          <Kpi label="关掉翻译率" ready={turnedOff && has("card_shown", "card_id")} need="translation_turned_off、card_shown.card_id"
+            value={allDisrupt ? pct(offAll(allDisrupt), allDisrupt.shown) : "–"}
+            note={allDisrupt && turnedOff ? `X ${pct(allDisrupt.off_x, allDisrupt.shown)} · 快捷键 ${pct(allDisrupt.off_shortcut, allDisrupt.shown)} · 设置 ${pct(allDisrupt.off_settings, allDisrupt.shown)}` : undefined} />
           <Kpi label="Esc 率" value={escWithId ? pct(allDisrupt?.esc ?? 0, allDisrupt?.shown ?? 0) : pct(q4.legacyEsc.esc, q4.legacyEsc.shown)}
             note={escWithId ? undefined : "暂按事件计（card_dismissed ÷ card_shown），旧版本 Esc 和点 X 不分"} />
-          <Kpi label="关翻译率" ready={has("translation_toggled") && has("card_shown", "card_id")} need="translation_toggled.recent_card_id"
-            value={allDisrupt ? pct(allDisrupt.off, allDisrupt.shown) : "–"} />
           <Kpi label="出卡后切走率" ready={has("ime_deactivated") && has("card_shown", "card_id")} need="ime_deactivated.recent_card_id"
             value={allDisrupt ? pct(allDisrupt.away, allDisrupt.shown) : "–"} />
         </div>
-        <h4>每人 X 关闭率（近 7 天展示 ≥ 10 张卡的设备）</h4>
+        <h4>关掉以后</h4>
         <div className="kpis">
-          <Kpi big label="X 关闭率 ≥ 30% 的设备占比" value={pct(q4.xPerDevice.annoyed, q4.xPerDevice.devices)} ready={has("card_closed")} need="card_closed"
-            note={has("card_closed") ? `${q4.xPerDevice.devices} 台设备` : undefined} />
-          <Kpi label="每人 X 关闭率 中位数 / p90" value={`${pctOf(q4.xPerDevice.p50)} / ${pctOf(q4.xPerDevice.p90)}`} ready={has("card_closed")} need="card_closed" />
+          <Kpi big label="重新打开前的时长 中位数 / p90（近 30 天的关闭）" ready={turnedOff} need="translation_turned_off、translation_turned_on"
+            value={`${minutes(reopenAll?.p50)} / ${minutes(reopenAll?.p90)}`}
+            note={reopenAll ? `${reopenAll.offs} 次关闭，${reopenAll.offs - reopenAll.reopened} 次还没重新打开` : undefined} />
+          <Kpi big label="从未重新打开的设备占比" ready={turnedOff && daily} need="translation_turned_off、translation_turned_on、input_time_daily"
+            value={pct(neverAll?.num ?? 0, neverAll?.den ?? 0)}
+            note={neverAll ? `${neverAll.num} / ${neverAll.den} 台（第一次关闭已满 7 天，之后还活跃过）` : undefined} />
+          <Kpi label="当前关着翻译的活跃设备" ready={has("input_time_daily", "translate_on")} need="input_time_daily.translate_on"
+            value={pct(q4.currentlyOff.translate_off, q4.currentlyOff.translate_n)}
+            note={has("input_time_daily", "polish_on") ? `润色：${pct(q4.currentlyOff.polish_off, q4.currentlyOff.polish_n)}` : undefined} />
+          <Kpi label="X 关闭率 ≥ 30% 的设备占比" value={pct(q4.xPerDevice.annoyed, q4.xPerDevice.devices)} ready={turnedOff || has("card_closed")} need="translation_turned_off"
+            note={`近 7 天展示 ≥ 10 张卡的设备；每人中位数 ${pctOf(q4.xPerDevice.p50)}，p90 ${pctOf(q4.xPerDevice.p90)}`} />
         </div>
         <div className="grid">
-          <section><h4>按卡片类型和触发方式</h4>
-            {!disruptReady ? <PendingBlock need={NEED_DISRUPT} /> : (
+          <section><h4>重新打开前的时长（按关闭方式）</h4>
+            {!turnedOff ? <PendingBlock need="translation_turned_off、translation_turned_on" /> : (
               <table>
-                <thead><tr><th scope="col">类型 · 触发</th><th scope="col">展示</th><th scope="col">X</th><th scope="col">Esc</th>
-                  <th scope="col">关翻译</th><th scope="col">切走</th><th scope="col">打扰率</th></tr></thead>
-                <tbody>{[...typeDisrupt, ...trigDisrupt].map((r) => (
-                  <tr key={`${r.type}-${r.trig}`}><td>{r.type === "polish" ? "润色" : "中译英"}{r.trig ? ` · ${r.trig}` : " · 合计"}</td>
-                    <td>{r.shown}</td><td>{pct(r.x, r.shown)}</td><td>{pct(r.esc, r.shown)}</td><td>{pct(r.off, r.shown)}</td>
-                    <td>{pct(r.away, r.shown)}</td><td>{pct(r.x + r.esc + r.off + r.away, r.shown)}</td></tr>
+                <thead><tr><th scope="col">关闭方式</th><th scope="col">关闭</th><th scope="col">已重新打开</th>
+                  <th scope="col">中位数</th><th scope="col">p90</th></tr></thead>
+                <tbody>{q4.reopen.filter((r) => r.label !== null).map((r) => (
+                  <tr key={r.label}><td>{OFF_SOURCE[r.label as string] ?? r.label}</td><td>{r.offs}</td><td>{r.reopened}</td>
+                    <td>{minutes(r.p50)}</td><td>{minutes(r.p90)}</td></tr>
                 ))}</tbody>
               </table>
             )}</section>
-          <section><h4>打扰率日趋势（四层）</h4>
+          <section><h4>从未重新打开（按第一次关闭的类型和方式）</h4>
+            {!(turnedOff && daily) ? <PendingBlock need="translation_turned_off、input_time_daily" /> : (
+              <table>
+                <thead><tr><th scope="col">卡片 · 方式</th><th scope="col">设备</th><th scope="col">从未重开</th></tr></thead>
+                <tbody>{q4.neverReopened.filter((r) => r.feature !== null).map((r) => (
+                  <tr key={`${r.feature}-${r.source}`}><td>{r.feature === "polish" ? "润色" : "中译英"} · {OFF_SOURCE[r.source ?? ""] ?? r.source}</td>
+                    <td>{r.den}</td><td>{pct(r.num, r.den)}</td></tr>
+                ))}</tbody>
+              </table>
+            )}</section>
+          <section><h4>按卡片类型和触发方式</h4>
             {!disruptReady ? <PendingBlock need={NEED_DISRUPT} /> : (
               <table>
-                <thead><tr><th scope="col">日期</th><th scope="col">展示</th><th scope="col">X</th><th scope="col">Esc</th>
-                  <th scope="col">关翻译</th><th scope="col">切走</th></tr></thead>
+                <thead><tr><th scope="col">类型 · 触发</th><th scope="col">展示</th><th scope="col">关掉</th><th scope="col">Esc</th>
+                  <th scope="col">切走</th><th scope="col">打扰率</th></tr></thead>
+                <tbody>{[...typeDisrupt, ...trigDisrupt].map((r) => (
+                  <tr key={`${r.type}-${r.trig}`}><td>{r.type === "polish" ? "润色" : "中译英"}{r.trig ? ` · ${r.trig}` : " · 合计"}</td>
+                    <td>{r.shown}</td><td>{pct(offAll(r), r.shown)}</td><td>{pct(r.esc, r.shown)}</td>
+                    <td>{pct(r.away, r.shown)}</td><td>{pct(offAll(r) + r.esc + r.away, r.shown)}</td></tr>
+                ))}</tbody>
+              </table>
+            )}</section>
+          <section><h4>打扰率日趋势（关掉 X / 快捷键 / 设置、Esc、切走）</h4>
+            {!disruptReady ? <PendingBlock need={NEED_DISRUPT} /> : (
+              <table>
+                <thead><tr><th scope="col">日期</th><th scope="col">展示</th><th scope="col">X</th><th scope="col">快捷键</th>
+                  <th scope="col">设置</th><th scope="col">Esc</th><th scope="col">切走</th></tr></thead>
                 <tbody>{q4.disruptByDay.map((r) => (
-                  <tr key={r.label}><td>{r.label}</td><td>{r.shown}</td><td>{pct(r.x, r.shown)}</td><td>{pct(r.esc, r.shown)}</td>
-                    <td>{pct(r.off, r.shown)}</td><td>{pct(r.away, r.shown)}</td></tr>
+                  <tr key={r.label}><td>{r.label}</td><td>{r.shown}</td><td>{pct(r.off_x, r.shown)}</td><td>{pct(r.off_shortcut, r.shown)}</td>
+                    <td>{pct(r.off_settings, r.shown)}</td><td>{pct(r.esc, r.shown)}</td><td>{pct(r.away, r.shown)}</td></tr>
                 ))}</tbody>
               </table>
             )}</section>
@@ -427,7 +463,7 @@ export default async function Page({ searchParams }: { searchParams: { platform?
             )}
             <p className="note">按小时汇总，按按键数加权平均。</p></section>
           <section><h4>关掉翻译 / 润色的设备（当前状态）</h4>
-            <Bars rows={q4.toggledOff} ready={has("translation_toggled")} need="translation_toggled" /></section>
+            <Bars rows={q4.toggledOff} ready={turnedOff || has("translation_toggled")} need="translation_turned_off / translation_turned_on" /></section>
           <section><h4>替换失败（近 7 天，失败率 {pct(q4.replaceTotal.failed, q4.replaceTotal.total)}）</h4>
             <Bars rows={q4.replaceFailures} />
             {!has("card_replaced", "app_category") && <p className="note">按应用类别拆分：<Pending need="card_replaced.app_category" /></p>}</section>

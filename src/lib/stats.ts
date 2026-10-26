@@ -299,11 +299,12 @@ export async function loadStats(f: Filters) {
         bool_or(name = 'card_edited_after_replace') AS edited,
         bool_or(name = 'card_glanced') AS glanced,
         bool_or(name = 'card_dismissed') AS esc,
-        bool_or(name = 'card_closed') AS closed,
+        bool_or(name = 'card_closed' OR name = 'translation_turned_off') AS closed,
         bool_or(name = 'sentence_latency' AND NOT ${OK}) AS failed,
         bool_or(name = 'card_feedback' AND props->>'vote' = 'down') AS down
       FROM ${EV(7)} e WHERE props ? 'card_id' AND name IN ('card_shown', 'card_replaced', 'card_undo_after_replace',
-        'card_edited_after_replace', 'card_glanced', 'card_dismissed', 'card_closed', 'sentence_latency', 'card_feedback')
+        'card_edited_after_replace', 'card_glanced', 'card_dismissed', 'card_closed', 'translation_turned_off',
+        'sentence_latency', 'card_feedback')
       GROUP BY 1
     )`;
   const outcomes = await q<Count>(`
@@ -343,12 +344,13 @@ export async function loadStats(f: Filters) {
         bool_or(name = 'polish_shown') AS shown,
         bool_or(name = 'polish_accepted' AND ${OK}) AS accepted,
         bool_or(name = 'polish_glanced') AS glanced,
-        bool_or(name = 'polish_closed') AS closed,
+        bool_or(name = 'polish_closed' OR (name = 'translation_turned_off' AND props->>'feature' = 'polish')) AS closed,
         bool_or(name = 'polish_dismissed') AS esc,
         bool_or(name = 'polish_undo_after_accept') AS undone,
         bool_or(name = 'polish_feedback' AND props->>'vote' = 'up') AS up,
         bool_or(name = 'polish_feedback' AND props->>'vote' = 'down') AS down
-      FROM ${EV(7)} e WHERE name LIKE 'polish\\_%' AND props ? 'card_id' GROUP BY 1
+      FROM ${EV(7)} e WHERE (name LIKE 'polish\\_%' OR (name = 'translation_turned_off' AND props->>'feature' = 'polish'))
+        AND props ? 'card_id' GROUP BY 1
     )
     SELECT CASE WHEN GROUPING(cat) = 0 THEN 'app' WHEN GROUPING(len) = 0 THEN 'len' ELSE 'all' END AS dim,
       coalesce(CASE WHEN GROUPING(cat) = 0 THEN cat ELSE len END, '?') AS label,
@@ -365,6 +367,9 @@ export async function loadStats(f: Filters) {
 
   // ---------- 4 打扰 ----------
   // Each card counts once, under whichever of the four happened first.
+  // Interrupt = turned off (X, shortcut, Settings) + Esc + switched away.
+  // Each card counts once, under whichever happened first. The deprecated
+  // card_closed / polish_closed count as X; translation_toggled off as Settings.
   const DISRUPT = `
     s AS (
       SELECT props->>'card_id' AS cid, min(${DAY}) AS day,
@@ -374,19 +379,24 @@ export async function loadStats(f: Filters) {
     ),
     d AS (
       SELECT coalesce(props->>'card_id', props->>'recent_card_id') AS cid, ts,
-        CASE WHEN name IN ('card_closed', 'polish_closed') THEN 'x'
+        CASE WHEN name = 'translation_turned_off' THEN coalesce(props->>'source', 'settings')
+             WHEN name IN ('card_closed', 'polish_closed') THEN 'x_button'
+             WHEN name = 'translation_toggled' THEN 'settings'
              WHEN name IN ('card_dismissed', 'polish_dismissed') THEN 'esc'
-             WHEN name = 'translation_toggled' THEN 'off' ELSE 'away' END AS kind
+             ELSE 'away' END AS kind
       FROM ${EV(8)} e
       WHERE (name IN ('card_closed', 'polish_closed', 'card_dismissed', 'polish_dismissed') AND props ? 'card_id')
+         OR (name = 'translation_turned_off' AND (props ? 'card_id' OR props ? 'recent_card_id'))
          OR (name = 'translation_toggled' AND (props->>'on')::boolean = false AND props ? 'recent_card_id')
          OR (name = 'ime_deactivated' AND props ? 'recent_card_id')
     ),
     fst AS (SELECT DISTINCT ON (cid) cid, kind FROM d ORDER BY cid, ts)`;
   const DISRUPT_COLS = `count(*)::int AS shown,
-    count(*) FILTER (WHERE f.kind = 'x')::int AS x, count(*) FILTER (WHERE f.kind = 'esc')::int AS esc,
-    count(*) FILTER (WHERE f.kind = 'off')::int AS off, count(*) FILTER (WHERE f.kind = 'away')::int AS away`;
-  type Disrupt = { shown: number; x: number; esc: number; off: number; away: number };
+    count(*) FILTER (WHERE f.kind = 'x_button')::int AS off_x,
+    count(*) FILTER (WHERE f.kind = 'shortcut')::int AS off_shortcut,
+    count(*) FILTER (WHERE f.kind = 'settings')::int AS off_settings,
+    count(*) FILTER (WHERE f.kind = 'esc')::int AS esc, count(*) FILTER (WHERE f.kind = 'away')::int AS away`;
+  type Disrupt = { shown: number; off_x: number; off_shortcut: number; off_settings: number; esc: number; away: number };
   const disrupt = await q<Disrupt & { type: string | null; trig: string | null }>(`
     WITH ${DISRUPT}
     SELECT s.type, s.trig, ${DISRUPT_COLS}
@@ -405,8 +415,10 @@ export async function loadStats(f: Filters) {
     WITH per AS (
       SELECT device_id,
         count(DISTINCT props->>'card_id') FILTER (WHERE name IN ('card_shown', 'polish_shown')) AS shown,
-        count(DISTINCT props->>'card_id') FILTER (WHERE name IN ('card_closed', 'polish_closed')) AS closed
-      FROM ${EV(7)} e WHERE props ? 'card_id' AND name IN ('card_shown', 'polish_shown', 'card_closed', 'polish_closed')
+        count(DISTINCT props->>'card_id') FILTER (WHERE name IN ('card_closed', 'polish_closed')
+          OR (name = 'translation_turned_off' AND props->>'source' = 'x_button')) AS closed
+      FROM ${EV(7)} e WHERE props ? 'card_id'
+        AND name IN ('card_shown', 'polish_shown', 'card_closed', 'polish_closed', 'translation_turned_off')
       GROUP BY 1
     )
     SELECT count(*)::int AS devices,
@@ -423,14 +435,72 @@ export async function loadStats(f: Filters) {
     FROM ${EV(15)} e WHERE name = 'key_latency' AND props ? 'count' AND props ? 'p50_us' AND props ? 'p90_us' AND props ? 'p99_us'
     GROUP BY ${DAY} ORDER BY ${DAY} DESC`);
 
+  // Turn-offs and turn-ons, with the deprecated translation_toggled folded in.
+  const SWITCHES = `
+    offs AS (
+      SELECT device_id, coalesce(props->>'feature', 'translate') AS feature,
+        coalesce(props->>'source', 'settings') AS source, ts
+      FROM ${ALL} e WHERE name = 'translation_turned_off'
+      UNION ALL
+      SELECT device_id, coalesce(props->>'feature', 'translate'), 'settings', ts
+      FROM ${ALL} e WHERE name = 'translation_toggled' AND (props->>'on')::boolean = false
+    ),
+    ons AS (
+      SELECT device_id, coalesce(props->>'feature', 'translate') AS feature, ts
+      FROM ${ALL} e WHERE name = 'translation_turned_on'
+         OR (name = 'translation_toggled' AND (props->>'on')::boolean = true)
+    )`;
+  const reopen = await q<{ label: string | null; offs: number; reopened: number; p50: number | null; p90: number | null }>(`
+    WITH ${SWITCHES},
+    paired AS (
+      SELECT o.source, o.ts,
+        (SELECT min(n.ts) FROM ons n WHERE n.device_id = o.device_id AND n.feature = o.feature AND n.ts > o.ts) AS on_ts
+      FROM offs o WHERE o.ts >= now() - interval '30 days'
+    )
+    SELECT source AS label, count(*)::int AS offs, count(on_ts)::int AS reopened,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM on_ts - ts) / 60) AS p50,
+      percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM on_ts - ts) / 60) AS p90
+    FROM paired GROUP BY GROUPING SETS ((source), ()) ORDER BY source NULLS FIRST`);
+  // Denominator: first turn-off at least 7 days ago, and active on a later day.
+  const neverReopened = await q<{ feature: string | null; source: string | null; num: number; den: number }>(`
+    WITH ${SWITCHES},
+    fst AS (SELECT DISTINCT ON (device_id, feature) device_id, feature, source, ts FROM offs ORDER BY device_id, feature, ts),
+    act AS (
+      SELECT DISTINCT device_id, (props->>'day')::date AS day FROM ${ALL} e
+      WHERE name = 'input_time_daily' AND props ? 'day' AND coalesce((props->>'commits')::int, 0) >= 1
+    )
+    SELECT f.feature, f.source,
+      count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM ons n
+        WHERE n.device_id = f.device_id AND n.feature = f.feature AND n.ts > f.ts))::int AS num,
+      count(*)::int AS den
+    FROM fst f
+    WHERE f.ts <= now() - interval '7 days'
+      AND EXISTS (SELECT 1 FROM act a WHERE a.device_id = f.device_id AND a.day > (f.ts AT TIME ZONE 'Asia/Shanghai')::date)
+    GROUP BY GROUPING SETS ((f.feature, f.source), ()) ORDER BY f.feature NULLS FIRST, f.source`);
+  const [currentlyOff] = await q<{ translate_off: number; translate_n: number; polish_off: number; polish_n: number }>(`
+    WITH latest AS (
+      SELECT DISTINCT ON (device_id) device_id, props FROM ${EV(9)} e
+      WHERE name = 'input_time_daily' AND props ? 'day' AND (props->>'day')::date > ${TODAY} - 7
+        AND coalesce((props->>'commits')::int, 0) >= 1
+      ORDER BY device_id, props->>'day' DESC, ts DESC
+    )
+    SELECT count(*) FILTER (WHERE (props->>'translate_on')::boolean = false)::int AS translate_off,
+      count(*) FILTER (WHERE props ? 'translate_on')::int AS translate_n,
+      count(*) FILTER (WHERE (props->>'polish_on')::boolean = false)::int AS polish_off,
+      count(*) FILTER (WHERE props ? 'polish_on')::int AS polish_n
+    FROM latest`);
+
   const toggledOff = await q<Count>(`
     SELECT feature || ' · ' || scope || CASE WHEN scope = 'app' THEN ' · ' || coalesce(cat, '?') ELSE '' END AS label,
       count(*)::int AS n
     FROM (
       SELECT DISTINCT ON (device_id, props->>'feature', props->>'scope', props->>'app_category')
         coalesce(props->>'feature', 'translate') AS feature, coalesce(props->>'scope', 'global') AS scope,
-        props->>'app_category' AS cat, (props->>'on')::boolean AS is_on
-      FROM ${ALL} e WHERE name = 'translation_toggled' AND props ? 'on'
+        props->>'app_category' AS cat,
+        CASE name WHEN 'translation_turned_off' THEN false WHEN 'translation_turned_on' THEN true
+          ELSE (props->>'on')::boolean END AS is_on
+      FROM ${ALL} e
+      WHERE name IN ('translation_turned_off', 'translation_turned_on') OR (name = 'translation_toggled' AND props ? 'on')
       ORDER BY device_id, props->>'feature', props->>'scope', props->>'app_category', ts DESC
     ) latest WHERE NOT latest.is_on GROUP BY 1 ORDER BY n DESC`);
   const [replaceTotal] = await q<{ total: number; failed: number }>(`
@@ -554,7 +624,7 @@ export async function loadStats(f: Filters) {
       dictImport, dictSources, userWords, candidates },
     q3: { adoption, adoptByTone, adoptByApp, adoptByLen, outcomes, downAdopted, downReasons, latency, latencyByDay,
       errorCodes, polish, polishLatency },
-    q4: { disrupt, disruptByDay, legacyEsc, xPerDevice, keyLatency, toggledOff, replaceTotal, replaceFailures, crashes },
+    q4: { disrupt, disruptByDay, legacyEsc, xPerDevice, reopen, neverReopened, currentlyOff, keyLatency, toggledOff, replaceTotal, replaceFailures, crashes },
     q5: { weeks, officialLearning, learnBuckets, learnMedian, learnByType, learnByLevel, learned, wordBook, learnNotTranslate },
     versions,
   };

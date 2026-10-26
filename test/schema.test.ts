@@ -115,6 +115,35 @@ describe("parseBatch", () => {
     expect(dict).toEqual({ entry: "gloss" });
   });
 
+  it("accepts turning cards off and on, and still accepts the deprecated close events", () => {
+    const card = "11111111-2222-4333-8444-555555555555";
+    const r = parseBatch(envelope([
+      { name: "translation_turned_off", ts: NOW, props: { feature: "translate", source: "x_button", scope: "global",
+        card_id: card, tone: "chat", app_category: "chat" } },
+      { name: "translation_turned_off", ts: NOW, props: { feature: "polish", source: "shortcut", scope: "global", recent_card_id: card } },
+      { name: "translation_turned_on", ts: NOW, props: { feature: "translate", source: "settings", scope: "app",
+        app_category: "code", off_min: 95 } },
+      { name: "translation_turned_on", ts: NOW, props: { source: "first_run", off_min: -1 } },
+      { name: "input_time_daily", ts: NOW, props: { day: "2026-10-15", commits: 3, translate_on: false, polish_on: true } },
+      { name: "card_closed", ts: NOW, props: { card_id: card, reason: "x_button" } },
+      { name: "polish_closed", ts: NOW, props: { card_id: card, reason: "x_button" } },
+      { name: "translation_toggled", ts: NOW, props: { feature: "translate", scope: "global", on: false } },
+    ]), NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.batch.dropped).toBe(0);
+    expect(r.batch.events.map((e) => e.props)).toEqual([
+      { feature: "translate", source: "x_button", scope: "global", card_id: card, tone: "chat", app_category: "chat" },
+      { feature: "polish", source: "shortcut", scope: "global", recent_card_id: card },
+      { feature: "translate", source: "settings", scope: "app", app_category: "code", off_min: 95 },
+      {},
+      { day: "2026-10-15", commits: 3, translate_on: false, polish_on: true },
+      { card_id: card, reason: "x_button" },
+      { card_id: card, reason: "x_button" },
+      { feature: "translate", scope: "global", on: false },
+    ]);
+  });
+
   it("checks event-specific values for shared prop names", () => {
     const r = parseBatch(envelope([
       { name: "ime_restarted", ts: NOW, props: { kind: "english" } },
