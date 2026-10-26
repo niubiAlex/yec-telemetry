@@ -14,7 +14,11 @@ export function db(): Pool {
 }
 
 // Additive and idempotent: safe to run on every cold start, never drops data.
+// Sent as one multi-statement query, so it runs as one implicit transaction;
+// the advisory lock (held to its end) serializes concurrent cold starts, which
+// otherwise deadlock on the ALTER TABLE / UPDATE locks.
 const SCHEMA = `
+SELECT pg_advisory_xact_lock(727001);
 CREATE TABLE IF NOT EXISTS batches (
   batch_id    uuid PRIMARY KEY,
   device_id   uuid NOT NULL,
