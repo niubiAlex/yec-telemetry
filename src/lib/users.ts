@@ -1,4 +1,5 @@
 import { db, ensureSchema } from "./db";
+import { isProduct, scoped, type Product } from "./product";
 
 // The 用户 pages: one row per device, keyed by the anonymous device_id (a
 // random UUID the client generates). Definitions follow lib/stats.ts.
@@ -47,8 +48,8 @@ export function searchTerms(q: string): { hexPrefix: string | null; deviceId: st
   return { hexPrefix: /^[0-9a-f]{1,8}$/i.test(hex) ? hex.toLowerCase() : null, deviceId: null, name: s };
 }
 
-async function q<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-  return (await db().query(sql, params)).rows as T[];
+async function qp<T>(product: Product, sql: string, params: unknown[] = []): Promise<T[]> {
+  return (await db().query(scoped(sql, product), params)).rows as T[];
 }
 
 export async function setName(deviceId: string, name: string): Promise<void> {
@@ -92,11 +93,11 @@ export interface UserRow {
   shown: number; adopted: number; glanced: number; p_shown: number; p_accepted: number; samples: number;
 }
 
-/** Every device (or only `only`), newest activity first, filtered by the search box. */
-export async function listUsers(search: string, only: string | null = null): Promise<UserRow[]> {
+/** Every device of `product` (or only `only`), newest activity first, filtered by the search box. */
+export async function listUsers(product: Product, search: string, only: string | null = null): Promise<UserRow[]> {
   await ensureSchema();
   const t = searchTerms(search);
-  return q<UserRow>(`
+  return qp<UserRow>(product, `
     WITH ${BASE},
     seen AS (
       SELECT device_id, min(ts) AS first_ts, max(ts) AS last_ts FROM (
@@ -150,7 +151,7 @@ export interface AppRow {
 }
 
 export interface Detail {
-  profile: UserRow & { os_version: string | null; english_level: string | null; improve_on: boolean | null;
+  profile: UserRow & { product: Product; os_version: string | null; english_level: string | null; improve_on: boolean | null;
     onboarded: boolean | null; first_active: string | null };
   days: DayRow[];
   apps: AppRow[];
@@ -162,8 +163,15 @@ export interface Detail {
 /** Everything about one device; `range` days back from today; `eventDay` lists that day's raw events. */
 export async function userDetail(deviceId: string, range: number, eventDay: string | null): Promise<Detail | null> {
   await ensureSchema();
-  const [profile] = (await listUsers(deviceId, deviceId)) as Detail["profile"][];
+  // A device belongs to the product of its latest batch; the page shows only that product's rows.
+  const [own] = (await db().query(
+    "SELECT product FROM batches WHERE device_id = $1 ORDER BY received_at DESC LIMIT 1", [deviceId])).rows;
+  if (!own || !isProduct(own.product)) return null;
+  const product: Product = own.product;
+  const q = <T>(sql: string, params: unknown[] = []) => qp<T>(product, sql, params);
+  const [profile] = (await listUsers(product, deviceId, deviceId)) as Detail["profile"][];
   if (!profile) return null;
+  profile.product = product;
   const [extra] = await q<{ os_version: string | null; english_level: string | null; improve_on: boolean | null;
     onboarded: boolean | null; first_active: string | null }>(`
     WITH ${BASE}

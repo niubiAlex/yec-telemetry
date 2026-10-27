@@ -1,3 +1,5 @@
+import { storedProduct } from "./product";
+
 // 「帮助改进翻译和润色」 samples (docs/beta-metrics-plan.md, section 7).
 //
 // The only place the collector takes text. A sample is sent when the user
@@ -78,6 +80,8 @@ export interface SampleBatch {
   appVersion: string;
   osVersion: string;
   platform: string | null;
+  /** lib/product.ts: "zh" when missing. */
+  product: string;
   samples: CleanSample[];
   rejected: { invalid: number; filtered: number };
 }
@@ -139,7 +143,7 @@ function parseSample(e: unknown, now: number): CleanSample | Reject {
  */
 export function parseSamples(body: unknown, now = Date.now()): ParsedSamples {
   if (!isObject(body)) return { ok: false, error: "body must be an object" };
-  const { device_id, app_version, os_version, channel, improve_on, samples, platform } = body;
+  const { device_id, app_version, os_version, channel, improve_on, samples, platform, product } = body;
   if (typeof device_id !== "string" || !UUID.test(device_id)) return { ok: false, error: "device_id" };
   if (typeof app_version !== "string" || !VERSION.test(app_version)) return { ok: false, error: "app_version" };
   if (typeof os_version !== "string" || !VERSION.test(os_version)) return { ok: false, error: "os_version" };
@@ -159,6 +163,7 @@ export function parseSamples(body: unknown, now = Date.now()): ParsedSamples {
     batch: {
       deviceId: device_id.toLowerCase(), appVersion: app_version, osVersion: os_version,
       platform: platform === "mac" || platform === "windows" ? platform : null,
+      product: storedProduct(product),
       samples: clean, rejected,
     },
   };

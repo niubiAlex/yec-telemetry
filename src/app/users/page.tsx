@@ -1,4 +1,5 @@
 import { listUsers, userCode, type UserRow } from "@/lib/users";
+import { PRODUCTS, productParam, type Product } from "@/lib/product";
 import { NameForm } from "./NameForm";
 
 export const dynamic = "force-dynamic";
@@ -7,28 +8,43 @@ export const runtime = "nodejs";
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
 const PLATFORM: Record<string, string> = { mac: "Mac", windows: "Windows" };
 
-export default async function Users({ searchParams }: { searchParams: { q?: string } }) {
+export default async function Users({ searchParams }: { searchParams: { q?: string; product?: string } }) {
   const search = (searchParams.q ?? "").slice(0, 64);
+  const product = productParam(searchParams.product);
   let rows: UserRow[];
   try {
-    rows = await listUsers(search);
+    rows = await listUsers(product, search);
   } catch (err) {
     console.error(err);
     return <main><h1>读取失败</h1><p className="sub">数据库不可用，检查 DATABASE_URL。</p></main>;
   }
-  const back = search ? `/users?q=${encodeURIComponent(search)}` : "/users";
+  const href = (p: Product, q = search) => {
+    const qs = new URLSearchParams();
+    if (p !== "zh") qs.set("product", p);
+    if (q) qs.set("q", q);
+    const s = qs.toString();
+    return `/users${s ? `?${s}` : ""}`;
+  };
+  const back = href(product);
   return (
     <main>
-      <p className="crumbs"><a href="/">← 总览</a></p>
-      <h1>用户</h1>
+      <p className="crumbs"><a href={product === "zh" ? "/" : `/?product=${product}`}>← 总览</a></p>
+      <h1>用户 · {PRODUCTS[product]}</h1>
       <p className="sub">
         内测设备一台一行，按最后上报时间排序。只有计数和枚举，没有用户打的字。备注名只存在看板这边，用来认人（比如「张三」），客户端看不到。
       </p>
+      <nav className="filters" aria-label="产品">
+        <span>产品：</span>
+        {(Object.keys(PRODUCTS) as Product[]).map((p) => (
+          <a key={p} href={href(p, "")} aria-current={product === p}>{PRODUCTS[p]}</a>
+        ))}
+      </nav>
       <form className="filters" method="get" action="/users" role="search">
+        {product !== "zh" && <input type="hidden" name="product" value={product} />}
         <label htmlFor="q">搜索：</label>
         <input id="q" name="q" defaultValue={search} placeholder="用户码（如 0A1B-2C3D 或开头几位）、备注名或设备 ID" size={36} autoComplete="off" />
         <button type="submit">搜索</button>
-        {search && <a href="/users">清除</a>}
+        {search && <a href={href(product, "")}>清除</a>}
         <small className="note">{rows.length} 台</small>
       </form>
       <p className="note">

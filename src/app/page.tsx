@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
+import { PRODUCTS, productParam, type Product } from "@/lib/product";
 import { How } from "./How";
 import { ADOPT_HINT, ADOPT_HOW, DISRUPT_HINT, DISRUPT_HOW, POLISH_ADOPT_HINT, POLISH_ADOPT_HOW, WEEKLY_OFF_HOW } from "./explain";
 import { DaySelect } from "./DaySelect";
@@ -132,8 +133,9 @@ function Trend({ rows }: { rows: { label: string; active: number; main: number }
 }
 
 export default async function Page({ searchParams }: {
-  searchParams: { platform?: string; active?: string; cohort?: string; range?: string; day?: string; rc?: string };
+  searchParams: { product?: string; platform?: string; active?: string; cohort?: string; range?: string; day?: string; rc?: string };
 }) {
+  const product = productParam(searchParams.product);
   const dayParam = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.day ?? "") ? searchParams.day : undefined;
   const rc = searchParams.rc === "active" ? "active" : "install";
   const platform: Platform | null =
@@ -144,7 +146,7 @@ export default async function Page({ searchParams }: {
   const RL = `近 ${range} 天`;
   let s: Awaited<ReturnType<typeof loadStats>>;
   try {
-    s = await loadStats({ platform, strict, cohort, range });
+    s = await loadStats({ product, platform, strict, cohort, range });
   } catch (err) {
     console.error(err);
     return <main><h1>读取失败</h1><p className="sub">数据库不可用，检查 DATABASE_URL。</p></main>;
@@ -152,8 +154,9 @@ export default async function Page({ searchParams }: {
   const P: Presence = s.presence;
   const has = (name: string, key?: string) => name in P && (!key || P[name].includes(key));
   const href = (p: Platform | null, st: boolean = strict, c: Cohort = cohort, r: number = range, anchor = "",
-    d: string | undefined = dayParam, rcv: string = rc) => {
+    d: string | undefined = dayParam, rcv: string = rc, pr: Product = product) => {
     const qs = new URLSearchParams();
+    if (pr !== "zh") qs.set("product", pr);
     if (r !== 7) qs.set("range", String(r));
     if (p) qs.set("platform", p);
     if (st) qs.set("active", "chars20");
@@ -537,21 +540,54 @@ export default async function Page({ searchParams }: {
 
   return (
     <main>
-      <h1>有道输入 · Beta 指标 <small className="more"><a href="/users">用户 →</a></small></h1>
+      <h1>有道输入 · Beta 指标 · {PRODUCTS[product]}{" "}
+        <small className="more"><a href={product === "zh" ? "/users" : `/users?product=${product}`}>用户 →</a></small></h1>
       <p className="sub">
         上面是总览：每格是所选那一天的值，小柱是范围内每天（悬停看数值），点格子展开逐日表，「详情 ↓」跳到对应问题。匿名统计，只有计数、枚举和错误码。日期按北京时间。
         <Pending need="" /> 表示客户端还没开始发需要的事件，不是 0。
       </p>
 
       <nav className="filters" aria-label="筛选：总览和下面的详情都按这里">
-        <span>日期范围：</span>
+        <span>产品：</span>
+        {(Object.keys(PRODUCTS) as Product[]).map((p) => (
+          <a key={p} href={href(platform, strict, cohort, range, "", dayParam, rc, p)} aria-current={product === p}>{PRODUCTS[p]}</a>
+        ))}
+        <span className="sep">日期范围：</span>
         {RANGES.map((r) => <a key={r} href={href(platform, strict, cohort, r)} aria-current={range === r}>近 {r} 天</a>)}
         <span className="sep">平台：</span>
         <a href={href(null)} aria-current={!platform}>全部</a>
         <a href={href("mac")} aria-current={platform === "mac"}>Mac</a>
         <a href={href("windows")} aria-current={platform === "windows"}>Windows</a>
       </nav>
+      <p className="note">
+        两个产品的数据完全分开：按每批上报里的 product 字段分，没有这个字段的（西语版之前的所有客户端）算中文版。
+        {s.otherProducts.length > 0 && (
+          <b> 另有客户端发了看板不认识的 product，两边都没算：
+            {s.otherProducts.map((o) => `${o.product}（${o.devices} 台）`).join("、")}。</b>
+        )}
+      </p>
+      {product === "es" && (
+        <section>
+          <h2>西语官网（网页试用）· {RL}</h2>
+          <p className="note">
+            官网服务器转发的计数（product = es_en_web），没有文字、网址或 IP。访客 = 浏览器会话，关掉标签页就是新访客。
+            「真翻译」是调用了模型的句子，其余是没配密钥时的示例或超过每日上限。
+          </p>
+          {s.web.length === 0 ? <p className="empty">暂无数据</p> : (
+            <table className="narrow">
+              <thead><tr><th scope="col">日期</th><th scope="col">访客</th><th scope="col">浏览</th><th scope="col">试用句子</th>
+                <th scope="col">真翻译</th><th scope="col">超限</th><th scope="col">点卡片替换</th>
+                <th scope="col">下载 Mac</th><th scope="col">下载 Windows</th></tr></thead>
+              <tbody>{s.web.map((r) => (
+                <tr key={r.day}><td>{r.day}</td><td>{r.visitors}</td><td>{r.views}</td><td>{r.sentences}</td><td>{r.model}</td>
+                  <td>{r.limited}</td><td>{r.accepted}</td><td>{r.mac}</td><td>{r.windows}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
+        </section>
+      )}
       <form className="filters" method="get" action="/" aria-label="选择日期：总览每格显示这一天">
+        {product !== "zh" && <input type="hidden" name="product" value={product} />}
         {range !== 7 && <input type="hidden" name="range" value={range} />}
         {platform && <input type="hidden" name="platform" value={platform} />}
         {strict && <input type="hidden" name="active" value="chars20" />}

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { isDeviceId, userCode, userDetail, type DayRow } from "@/lib/users";
 import { How } from "../../How";
 import { ADOPT_HOW, DISRUPT_HOW, POLISH_ADOPT_HOW } from "../../explain";
+import { PRODUCTS } from "@/lib/product";
 import { NameForm } from "../NameForm";
 
 export const dynamic = "force-dynamic";
@@ -50,9 +51,12 @@ export default async function UserDetail({ params, searchParams }: {
 
   return (
     <main>
-      <p className="crumbs"><a href="/">← 总览</a> · <a href="/users">用户</a></p>
+      <p className="crumbs">
+        <a href={p.product === "zh" ? "/" : `/?product=${p.product}`}>← 总览</a> ·{" "}
+        <a href={p.product === "zh" ? "/users" : `/users?product=${p.product}`}>用户 · {PRODUCTS[p.product]}</a>
+      </p>
       <h1><span className="code">{userCode(id)}</span> {p.name && <span>{p.name}</span>}</h1>
-      <p className="sub">设备 ID {id}。只有计数、枚举和应用标识，没有用户打的字；「帮助改进」样本只显示条数。</p>
+      <p className="sub">{PRODUCTS[p.product]}，设备 ID {id}。只有计数、枚举和应用标识，没有用户打的字；「帮助改进」样本只显示条数。</p>
       <NameForm deviceId={id} name={p.name} back={self()} />
 
       <div className="kpis">

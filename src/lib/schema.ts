@@ -1,3 +1,5 @@
+import { storedProduct } from "./product";
+
 // The wire format, mirrored from the IME's Telemetry.swift (TelemetryEvent).
 //
 // The client already strips anything off-schema; this repeats the checks so a
@@ -260,6 +262,8 @@ export interface BatchMeta {
   onboarded: boolean | null;
   installDate: string | null;
   improveOn: boolean | null;
+  /** lib/product.ts: "zh" when missing (every client before the Spanish package). */
+  product: string;
 }
 
 export interface Batch {
@@ -289,6 +293,7 @@ function parseMeta(body: Record<string, unknown>): BatchMeta {
     onboarded: pick<boolean>(body.onboarded, bool),
     installDate: pick<string>(body.install_date, isDay),
     improveOn: pick<boolean>(body.improve_on, bool),
+    product: storedProduct(body.product),
   };
 }
 

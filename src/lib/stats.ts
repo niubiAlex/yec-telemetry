@@ -1,4 +1,6 @@
 import { db, ensureSchema } from "./db";
+import { PRODUCTS, scoped, type Product } from "./product";
+import { WEB_PRODUCT } from "./web";
 
 // Metrics follow docs/beta-metrics-plan.md. Days are Beijing days; day 0 is
 // the install day; weeks start Monday 00:00 Beijing time.
@@ -27,7 +29,7 @@ const LEARNING_IN = LEARNING_EVENTS.map((n) => `'${n}'`).join(",");
 export type Platform = "mac" | "windows";
 export type Cohort = "day" | "week";
 export const RANGES = [7, 14, 30, 90] as const;
-export interface Filters { platform: Platform | null; strict: boolean; cohort: Cohort; range: number }
+export interface Filters { product: Product; platform: Platform | null; strict: boolean; cohort: Cohort; range: number }
 
 // Clients before the beta plan send no `platform`; Windows builds send
 // os_version "windows 10.0.x", so that is used as the fallback.
@@ -36,7 +38,7 @@ const DEVICE_PLATFORM = `
     coalesce(platform, CASE WHEN os_version ILIKE 'windows%' THEN 'windows' ELSE 'mac' END) AS platform
   FROM batches ORDER BY device_id, received_at DESC`;
 
-async function q<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+async function rawQ<T>(sql: string, params: unknown[] = []): Promise<T[]> {
   return (await db().query(sql, params)).rows as T[];
 }
 
@@ -48,6 +50,25 @@ export type Presence = Record<string, string[]>;
 
 export async function loadStats(f: Filters) {
   await ensureSchema();
+  // Every query below sees only the selected product's events, batches and samples.
+  const q = <T>(sql: string, params: unknown[] = []) => rawQ<T>(scoped(sql, f.product), params);
+  // Devices whose client sent a product the dashboard does not know: counted in neither.
+  const otherProducts = await rawQ<{ product: string; devices: number }>(`
+    SELECT product, count(DISTINCT device_id)::int AS devices FROM batches
+    WHERE product NOT IN (${[...Object.keys(PRODUCTS), WEB_PRODUCT].map((p) => `'${p}'`).join(", ")}) GROUP BY 1 ORDER BY 1`);
+  // The Spanish keyboard website, shown with 西语版: counts per day.
+  const web = f.product !== "es" ? [] : await rawQ<{ day: string; visitors: number; views: number; sentences: number;
+    model: number; limited: number; accepted: number; mac: number; windows: number }>(`
+    SELECT to_char(${DAY}, 'YYYY-MM-DD') AS day, count(DISTINCT device_id)::int AS visitors,
+      count(*) FILTER (WHERE name = 'web_page_view')::int AS views,
+      count(*) FILTER (WHERE name = 'web_demo_sentence')::int AS sentences,
+      count(*) FILTER (WHERE name = 'web_demo_sentence' AND props->>'result' = 'model')::int AS model,
+      count(*) FILTER (WHERE name = 'web_demo_sentence' AND props->>'result' = 'limited')::int AS limited,
+      count(*) FILTER (WHERE name = 'web_card_accepted')::int AS accepted,
+      count(*) FILTER (WHERE name = 'web_download_click' AND props->>'platform' = 'mac')::int AS mac,
+      count(*) FILTER (WHERE name = 'web_download_click' AND props->>'platform' = 'windows')::int AS windows
+    FROM events WHERE product = '${WEB_PRODUCT}' AND ts >= now() - interval '${(RANGES as readonly number[]).includes(f.range) ? f.range : 7} days'
+    GROUP BY 1 ORDER BY 1 DESC`);
   // `platform` is checked against the two literals before it is inlined.
   const scope = f.platform === "mac" || f.platform === "windows"
     ? `AND device_id IN (SELECT device_id FROM (${DEVICE_PLATFORM}) dp WHERE platform = '${f.platform}')`
@@ -970,7 +991,7 @@ export async function loadStats(f: Filters) {
     GROUP BY 1 ORDER BY n DESC LIMIT 15`);
 
   return {
-    range: R,
+    range: R, otherProducts, web,
     ov: { series, installDaily, activeDaily, hitSeries, disruptSeries, basics, verDist, officialActive, sampleDays, sampleTotals },
     presence, meta, overview, cohorts: cohorts.n,
     q1: { retention, cohortRows, activeTrend, daily, charsDist, awayDist, enDominant, enByApp, awayTime, toKinds, activeEnglish, survey },

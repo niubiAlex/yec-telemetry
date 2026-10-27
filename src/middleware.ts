@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { basicPassword, safeEqual } from "@/lib/auth";
 
 // The dashboard is behind Basic auth. The client endpoints (ingest, samples,
-// remote config, update manifests, installer downloads) and the token-checked
-// admin endpoint are not matched here.
+// web events, remote config, update manifests, installer downloads) and the
+// token-checked admin endpoint are not matched here.
 export const config = {
-  matcher: ["/((?!api/events|api/samples|api/config|api/update|api/admin|dl/|_next/static|favicon.ico).*)"],
+  matcher: ["/((?!api/events|api/samples|api/web|api/config|api/update|api/admin|dl/|_next/static|favicon.ico).*)"],
 };
 
 export function middleware(req: NextRequest) {

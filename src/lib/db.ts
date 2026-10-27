@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS device_names (
   name        text NOT NULL,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+-- 中文版 / 西语版 (lib/product.ts). Rows from before the field are 中文版.
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS product text NOT NULL DEFAULT 'zh';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS product text NOT NULL DEFAULT 'zh';
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS product text NOT NULL DEFAULT 'zh';
 CREATE TABLE IF NOT EXISTS remote_docs (
   name        text PRIMARY KEY,
   body        jsonb NOT NULL,
@@ -123,10 +127,10 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
     await client.query("BEGIN");
     const inserted = await client.query(
       `INSERT INTO batches (batch_id, device_id, app_version, os_version,
-         platform, channel, english_level, onboarded, install_date, improve_on)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (batch_id) DO NOTHING`,
+         platform, channel, english_level, onboarded, install_date, improve_on, product)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (batch_id) DO NOTHING`,
       [b.batchId, b.deviceId, b.appVersion, b.osVersion, b.meta.platform, b.meta.channel,
-        b.meta.englishLevel, b.meta.onboarded, b.meta.installDate, b.meta.improveOn],
+        b.meta.englishLevel, b.meta.onboarded, b.meta.installDate, b.meta.improveOn, b.meta.product],
     );
     if (inserted.rowCount === 0) {
       await client.query("ROLLBACK");
@@ -134,8 +138,8 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
     }
     if (b.events.length > 0) {
       await client.query(
-        `INSERT INTO events (batch_id, device_id, name, ts, props)
-         SELECT $1, $2, e.name, to_timestamp(e.ts / 1000.0), e.props::jsonb
+        `INSERT INTO events (batch_id, device_id, name, ts, props, product)
+         SELECT $1, $2, e.name, to_timestamp(e.ts / 1000.0), e.props::jsonb, $6
          FROM unnest($3::text[], $4::float8[], $5::text[]) AS e(name, ts, props)`,
         [
           b.batchId,
@@ -143,6 +147,7 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
           b.events.map((e) => e.name),
           b.events.map((e) => e.ts),
           b.events.map((e) => JSON.stringify(e.props)),
+          b.meta.product,
         ],
       );
     }
@@ -166,9 +171,9 @@ export async function storeSamples(b: SampleBatch): Promise<number> {
   const col = <K extends keyof SampleBatch["samples"][number]>(k: K) => b.samples.map((s) => s[k]);
   const r = await db().query(
     `INSERT INTO samples (device_id, app_version, os_version, platform, kind, card_id, ts, source, output,
-       vote, reason, outcome, tone, change_size, app_category, len_bucket, ref, answer)
+       vote, reason, outcome, tone, change_size, app_category, len_bucket, ref, answer, product)
      SELECT $1, $2, $3, $4, s.kind, s.card_id, to_timestamp(s.ts / 1000.0), s.source, s.output,
-       s.vote, s.reason, s.outcome, s.tone, s.change_size, s.app_category, s.len_bucket, s.ref, s.answer
+       s.vote, s.reason, s.outcome, s.tone, s.change_size, s.app_category, s.len_bucket, s.ref, s.answer, $19
      FROM unnest($5::text[], $6::uuid[], $7::float8[], $8::text[], $9::text[], $10::text[], $11::text[],
        $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[], $18::text[])
        AS s(kind, card_id, ts, source, output, vote, reason, outcome, tone, change_size, app_category, len_bucket, ref, answer)
@@ -176,10 +181,10 @@ export async function storeSamples(b: SampleBatch): Promise<number> {
        ts = EXCLUDED.ts, received_at = now(), app_version = EXCLUDED.app_version, os_version = EXCLUDED.os_version,
        platform = EXCLUDED.platform, source = EXCLUDED.source, output = EXCLUDED.output, vote = EXCLUDED.vote,
        reason = EXCLUDED.reason, outcome = EXCLUDED.outcome, tone = EXCLUDED.tone, change_size = EXCLUDED.change_size,
-       app_category = EXCLUDED.app_category, len_bucket = EXCLUDED.len_bucket`,
+       app_category = EXCLUDED.app_category, len_bucket = EXCLUDED.len_bucket, product = EXCLUDED.product`,
     [b.deviceId, b.appVersion, b.osVersion, b.platform, col("kind"), col("cardId"), col("ts"), col("source"),
       col("output"), col("vote"), col("reason"), col("outcome"), col("tone"), col("changeSize"),
-      col("appCategory"), col("lenBucket"), col("ref"), col("answer")],
+      col("appCategory"), col("lenBucket"), col("ref"), col("answer"), b.product],
   );
   return r.rowCount ?? 0;
 }

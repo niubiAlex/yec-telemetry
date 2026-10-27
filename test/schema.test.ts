@@ -89,11 +89,11 @@ describe("parseBatch", () => {
     const ok = parseBatch({ ...envelope([{ name: "install", ts: NOW }]), platform: "windows", channel: "beta",
       english_level: "B1", onboarded: true, install_date: "2026-10-12", improve_on: false }, NOW);
     expect(ok.ok && ok.batch.meta).toEqual({ platform: "windows", channel: "beta", englishLevel: "B1", onboarded: true,
-      installDate: "2026-10-12", improveOn: false });
+      installDate: "2026-10-12", improveOn: false, product: "zh" });
     const bad = parseBatch({ ...envelope([{ name: "install", ts: NOW }]), platform: "linux", channel: "Beta 1",
       english_level: "D9", onboarded: "yes", install_date: "2026-02-30", improve_on: 1 }, NOW);
     expect(bad.ok && bad.batch.meta).toEqual({ platform: null, channel: null, englishLevel: null, onboarded: null,
-      installDate: null, improveOn: null });
+      installDate: null, improveOn: null, product: "zh" });
     const old = parseBatch(envelope([{ name: "install", ts: NOW }]), NOW);
     expect(old.ok && old.batch.meta.platform).toBe(null);
   });
