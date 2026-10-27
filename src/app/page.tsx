@@ -16,6 +16,9 @@ const OUTCOME: Record<string, string> = {
   adopted: "采纳", undone: "采纳后撤销", edited: "采纳后大改", failed: "出卡失败", closed: "关掉翻译", esc: "Esc",
   away: "出卡后切走", glanced: "看过未采纳（中性）", none: "没看也没操作（中性）",
 };
+const LANG_PAIR: Record<string, string> = { en_es: "英 → 西", es_en: "西 → 英", en_en: "英文润色" };
+const VIA: Record<string, string> = { menu: "菜单", shortcut: "快捷键", settings: "设置", "?": "未知" };
+const SAMPLE_KIND: Record<string, string> = { es_en: "西 → 英", en_es: "英 → 西", polish: "润色", survey: "问卷", zh_en: "中译英" };
 const OUTCOME_ORDER = ["adopted", "undone", "edited", "glanced", "esc", "closed", "away", "failed", "none"];
 const LEARNING: Record<string, string> = {
   new_word_clicked: "点击生词", gloss_clicked: "点击释义", recall_clicked: "点击回顾提示", word_added_to_book: "加入生词本",
@@ -378,7 +381,8 @@ export default async function Page({ searchParams }: {
     : fbDay > 0 ? `其中 ${fbDay} 台当天没有 input_time_daily，按有上报算` : undefined;
   const retInterim = ov.officialActive ? "没有 input_time_daily 的设备·天按有上报算" : "临时：有上报即算活跃";
   const ACTIVE_DEF = `活跃按设备逐天判断：这台设备这一天有 input_time_daily 时，看当天${strict ? "上屏 ≥ 20 字" : "上屏 ≥ 1 次"}；没有时，当天有任何上报就算活跃`;
-  const sampleN = (r: { zh_en: number; polish: number; survey: number }) => r.zh_en + r.polish + r.survey;
+  const sampleN = (r: { zh_en: number; polish: number; survey: number; es_en: number; en_es: number }) =>
+    r.zh_en + r.polish + r.survey + r.es_en + r.en_es;
   const samplesReady = ov.sampleTotals.stored > 0 || ov.sampleDays.some((r) => sampleN(r) > 0);
   const sDay = ov.sampleDays.find((r) => r.day === day);
 
@@ -390,7 +394,7 @@ export default async function Page({ searchParams }: {
     { label: "卡片展示", pts: byDay(ov.series, (r) => countP(r.shown)), fmt: fNum(), rate: false, ready: true, need: "" },
     { label: "样本上传", pts: byDay(ov.sampleDays, (r) => countP(sampleN(r))), fmt: fNum(), rate: false, ready: samplesReady,
       need: "客户端 0.2.2 起上传到 POST /api/samples",
-      note: `中译英 ${sDay?.zh_en ?? 0} · 润色 ${sDay?.polish ?? 0} · 问卷 ${sDay?.survey ?? 0} · 在库 ${ov.sampleTotals.stored}`
+      note: (product === "es" ? `西→英 ${sDay?.es_en ?? 0} · 英→西 ${sDay?.en_es ?? 0}` : `中译英 ${sDay?.zh_en ?? 0}`) + ` · 润色 ${sDay?.polish ?? 0} · 问卷 ${sDay?.survey ?? 0} · 在库 ${ov.sampleTotals.stored}`
         + (ov.sampleTotals.deletions ? ` · 用户删除 ${ov.sampleTotals.deletions} 次` : "") },
   ];
 
@@ -581,6 +585,53 @@ export default async function Page({ searchParams }: {
               <tbody>{s.web.map((r) => (
                 <tr key={r.day}><td>{r.day}</td><td>{r.visitors}</td><td>{r.views}</td><td>{r.sentences}</td><td>{r.model}</td>
                   <td>{r.limited}</td><td>{r.accepted}</td><td>{r.mac}</td><td>{r.windows}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
+        </section>
+      )}
+      {product === "es" && (
+        <section>
+          <h2>按方向 · {RL}</h2>
+          <p className="note">
+            卡片和润色事件按 lang_pair 拆开。替换率 = 替换成功 ÷ 卡片出现；撤销率 = 撤销 ÷ 替换成功。延迟中位数只算成功的请求。
+            没带 lang_pair 的事件（老客户端）不在这张表里。
+          </p>
+          {s.byDirection.length === 0 ? <p className="empty">暂无数据</p> : (
+            <table className="narrow">
+              <thead><tr><th scope="col">方向</th><th scope="col">设备</th><th scope="col">卡片出现</th><th scope="col">看了</th>
+                <th scope="col">替换</th><th scope="col">替换率</th><th scope="col">撤销</th><th scope="col">撤销率</th><th scope="col">Esc</th>
+                <th scope="col">润色出现</th><th scope="col">润色采纳</th><th scope="col">润色撤销</th>
+                <th scope="col">👍</th><th scope="col">👎</th><th scope="col">请求</th><th scope="col">失败</th><th scope="col">延迟中位数</th></tr></thead>
+              <tbody>{s.byDirection.map((r) => (
+                <tr key={r.lang_pair}><td>{LANG_PAIR[r.lang_pair] ?? r.lang_pair}</td><td>{r.devices}</td><td>{r.shown}</td><td>{r.glanced}</td>
+                  <td>{r.replaced}</td><td>{r.shown ? `${Math.round((r.replaced / r.shown) * 100)}%` : "—"}</td>
+                  <td>{r.undone}</td><td>{r.replaced ? `${Math.round((r.undone / r.replaced) * 100)}%` : "—"}</td><td>{r.esc}</td>
+                  <td>{r.p_shown}</td><td>{r.p_accepted}</td><td>{r.p_undone}</td><td>{r.up}</td><td>{r.down}</td>
+                  <td>{r.lat_n}</td><td>{r.lat_err}</td><td>{r.p50 == null ? "—" : `${r.p50} ms`}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
+          <h2>切换方向 · {RL}</h2>
+          <p className="note">mode_switched 按切到的方向和入口计数。</p>
+          {s.modeSwitches.length === 0 ? <p className="empty">暂无数据</p> : (
+            <table className="narrow">
+              <thead><tr><th scope="col">切到</th><th scope="col">入口</th><th scope="col">次数</th><th scope="col">设备</th></tr></thead>
+              <tbody>{s.modeSwitches.map((r) => (
+                <tr key={`${r.to_mode}-${r.via}`}><td>{LANG_PAIR[r.to_mode] ?? r.to_mode}</td><td>{VIA[r.via] ?? r.via}</td>
+                  <td>{r.n}</td><td>{r.devices}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
+          <h2>样本（按类型）</h2>
+          <p className="note">只有条数，看板不读样本文字。「近 {range} 天」按上传时间算。</p>
+          {s.samplesByKind.length === 0 ? <p className="empty">暂无数据</p> : (
+            <table className="narrow">
+              <thead><tr><th scope="col">类型</th><th scope="col">在库</th><th scope="col">近 {range} 天</th><th scope="col">设备</th>
+                <th scope="col">👍</th><th scope="col">👎</th></tr></thead>
+              <tbody>{s.samplesByKind.map((r) => (
+                <tr key={r.kind}><td>{SAMPLE_KIND[r.kind] ?? r.kind}</td><td>{r.n}</td><td>{r.recent}</td><td>{r.devices}</td>
+                  <td>{r.up}</td><td>{r.down}</td></tr>
               ))}</tbody>
             </table>
           )}

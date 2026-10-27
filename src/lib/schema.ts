@@ -42,6 +42,8 @@ type Check = (v: unknown) => boolean;
 const COUNT = int(0, 10_000_000);
 const MINUTES = int(0, 1440);
 const KIND = oneOf("cjk_ime", "latin_layout", "other");
+export const LANG_PAIRS = ["en_es", "es_en", "en_en"] as const;
+const LANG_PAIR = oneOf(...LANG_PAIRS);
 
 const PROP: Record<string, Check> = {
   tone: isTone,
@@ -131,6 +133,11 @@ const PROP: Record<string, Check> = {
   translate_on: bool,
   polish_on: bool,
   off_min: int(0, 1_000_000),
+  // Spanish Keyboard: direction of a card or polish suggestion, and mode switches.
+  lang_pair: LANG_PAIR,
+  from_mode: LANG_PAIR,
+  to_mode: LANG_PAIR,
+  via: oneOf("menu", "shortcut", "settings"),
 };
 
 // Props whose values depend on the event (`kind`, `entry`, `reason`, ...).
@@ -168,15 +175,15 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   input_source_added: [],
   daily_active: [],
   app_used: ["bundle_id", "app_name", "app_category"],
-  card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger", "bundle_id"],
-  card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket", "bundle_id"],
+  card_shown: ["tone", "card_id", "app_category", "len_bucket", "trigger", "bundle_id", "lang_pair"],
+  card_replaced: ["method", "tone", "ok", "fail_reason", "card_id", "app_category", "len_bucket", "bundle_id", "lang_pair"],
   // Esc only; the X button sends translation_turned_off.
-  card_dismissed: ["tone", "card_id"],
+  card_dismissed: ["tone", "card_id", "lang_pair"],
   // Reserved: a card skipped by typing on, once the client splits it from Esc.
   card_ignored: ["tone"],
-  card_undo_after_replace: ["method", "tone", "card_id"],
-  tone_switched: ["from", "to", "card_id"],
-  sentence_latency: ["ms", "ok", "error_code", "card_id"],
+  card_undo_after_replace: ["method", "tone", "card_id", "lang_pair"],
+  tone_switched: ["from", "to", "card_id", "lang_pair"],
+  sentence_latency: ["ms", "ok", "error_code", "card_id", "lang_pair"],
   gloss_shown: [],
   dict_opened: ["entry"],
   new_word_shown: [],
@@ -208,18 +215,18 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
     "backspaces", "en_commits", "en_chars"],
   user_word_added: ["entry"],
   // 3 翻译准不准
-  card_glanced: ["card_id", "tone", "app_category", "len_bucket", "bundle_id"],
-  card_edited_after_replace: ["card_id", "tone", "edit_pct"],
-  card_feedback: ["card_id", "tone", "vote", "reason"],
-  polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger", "bundle_id"],
-  polish_accepted: ["card_id", "method", "ok", "fail_reason"],
+  card_glanced: ["card_id", "tone", "app_category", "len_bucket", "bundle_id", "lang_pair"],
+  card_edited_after_replace: ["card_id", "tone", "edit_pct", "lang_pair"],
+  card_feedback: ["card_id", "tone", "vote", "reason", "lang_pair"],
+  polish_shown: ["card_id", "app_category", "len_bucket", "change_size", "trigger", "bundle_id", "lang_pair"],
+  polish_accepted: ["card_id", "method", "ok", "fail_reason", "lang_pair"],
   // Deprecated: superseded by translation_turned_off (feature=polish).
   polish_closed: ["card_id", "reason"],
-  polish_dismissed: ["card_id"],
-  polish_undo_after_accept: ["card_id", "method"],
-  polish_glanced: ["card_id"],
-  polish_feedback: ["card_id", "vote", "reason"],
-  polish_latency: ["card_id", "ms", "ok", "error_code"],
+  polish_dismissed: ["card_id", "lang_pair"],
+  polish_undo_after_accept: ["card_id", "method", "lang_pair"],
+  polish_glanced: ["card_id", "lang_pair"],
+  polish_feedback: ["card_id", "vote", "reason", "lang_pair"],
+  polish_latency: ["card_id", "ms", "ok", "error_code", "lang_pair"],
   // 4 打扰
   // X, the on/off shortcut or Settings: cards stay off until turned back on.
   translation_turned_off: ["feature", "source", "scope", "card_id", "recent_card_id", "tone", "app_category", "bundle_id"],
@@ -240,6 +247,8 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   improve_notice_shown: ["entry", "notice_version"],
   improve_optin_changed: ["on", "entry"],
   improve_samples_deleted: [],
+  // Spanish Keyboard (product "es"): the direction picked in the menu, by shortcut or in Settings.
+  mode_switched: ["from_mode", "to_mode", "via"],
 };
 
 export const MAX_BODY_BYTES = 256 * 1024;

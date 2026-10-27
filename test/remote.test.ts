@@ -94,5 +94,9 @@ describe("documents", () => {
     expect(checkDoc("update-mac-test", manifest).ok).toBe(true);
     expect(checkDoc("update-mac", config).ok).toBe(false);
     expect(checkDoc("anything", manifest).ok).toBe(false);
+    expect(docName("es-mac" as "mac")).toBe("update-es-mac");
+    expect(docName("es-windows" as "mac", "test")).toBe("update-es-windows-test");
+    expect(checkDoc("update-es-windows", manifest).ok).toBe(true);
+    expect(checkDoc("update-es-linux", manifest).ok).toBe(false);
   });
 });

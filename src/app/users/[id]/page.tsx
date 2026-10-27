@@ -13,7 +13,7 @@ const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` :
 const n0 = (v: number | null | undefined) => (v == null ? <span className="muted">–</span> : v === 0 ? <span className="muted">0</span> : v);
 const PLATFORM: Record<string, string> = { mac: "Mac", windows: "Windows" };
 const APP: Record<string, string> = { chat: "聊天", mail: "邮件", doc: "文档", code: "写代码", other: "其他" };
-const SAMPLE: Record<string, string> = { zh_en: "中译英", polish: "润色", survey: "第 7 天问卷" };
+const SAMPLE: Record<string, string> = { zh_en: "中译英", es_en: "西 → 英", en_es: "英 → 西", polish: "润色", survey: "第 7 天问卷" };
 const LEVEL: Record<string, string> = { unset: "未设置" };
 const yesNo = (v: boolean | null | undefined, yes = "是", no = "否") => (v == null ? "–" : v ? yes : no);
 

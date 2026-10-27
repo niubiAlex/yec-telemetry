@@ -171,6 +171,23 @@ describe("parseBatch", () => {
     expect(r.ok && r.batch.events.map((e) => e.props)).toEqual([{}, { level: "B1" }, {}, {}, {}]);
   });
 
+  it("keeps the Spanish keyboard's lang_pair and mode_switched, dropping bad values", () => {
+    const r = parseBatch(envelope([
+      { name: "card_shown", ts: NOW, props: { tone: "work", lang_pair: "es_en" } },
+      { name: "polish_accepted", ts: NOW, props: { method: "tab", ok: true, lang_pair: "en_en" } },
+      { name: "card_replaced", ts: NOW, props: { method: "tab", lang_pair: "zh_en" } },
+      { name: "mode_switched", ts: NOW, props: { from_mode: "en_es", to_mode: "es_en", via: "shortcut" } },
+      { name: "mode_switched", ts: NOW, props: { from_mode: "fr", to_mode: "en_en", via: "voice" } },
+    ]), NOW);
+    expect(r.ok && r.batch.events.map((e) => e.props)).toEqual([
+      { tone: "work", lang_pair: "es_en" },
+      { method: "tab", ok: true, lang_pair: "en_en" },
+      { method: "tab" },
+      { from_mode: "en_es", to_mode: "es_en", via: "shortcut" },
+      { to_mode: "en_en" },
+    ]);
+  });
+
   it("skips unknown events but keeps the batch", () => {
     const r = parseBatch(envelope([{ name: "typed_text", ts: NOW, props: {} }, { name: "install", ts: NOW }]), NOW);
     expect(r.ok && r.batch.events.map((e) => e.name)).toEqual(["install"]);

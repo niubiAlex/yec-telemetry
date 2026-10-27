@@ -7,14 +7,17 @@ import { storedProduct } from "./product";
 // day-7 survey, from a beta build with the switch on. The client filters first; this repeats the filters, and a sample
 // that fails any of them is dropped, never trimmed.
 
-export const SAMPLE_KINDS = ["zh_en", "polish", "survey"] as const;
+// es_en / en_es: Spanish Keyboard cards (product "es"); its English polish samples stay "polish".
+export const SAMPLE_KINDS = ["zh_en", "polish", "survey", "es_en", "en_es"] as const;
 export type SampleKind = (typeof SAMPLE_KINDS)[number];
 
 export const MAX_SAMPLE_BODY_BYTES = 64 * 1024;
 export const MAX_SAMPLES = 20;
 export const RETENTION_DAYS = 90;
 /** Max length of each text field, in characters (code points). */
-export const LIMITS = { source_zh: 500, output_en: 2000, source_en: 1000, output_polished: 2000, comment: 500 } as const;
+export const LIMITS = {
+  source_zh: 500, output_en: 2000, source_en: 1000, output_polished: 2000, comment: 500, source: 1000, output: 2000,
+} as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VERSION = /^[A-Za-z0-9 ._()+-]{1,32}$/;
@@ -29,12 +32,14 @@ const isChange = oneOf("small", "medium", "large");
 const isSurvey = oneOf("day7_disappointment");
 const isAnswer = oneOf("very", "somewhat", "not");
 type CardKind = Exclude<SampleKind, "survey">;
+const CARD_REASONS = oneOf("wrong_meaning", "unnatural", "wrong_tone", "too_long", "other");
+const CARD_OUTCOMES = oneOf("replaced", "undone", "edited", "dismissed", "turned_off", "glanced", "none");
 const REASONS: Record<CardKind, (v: unknown) => v is string> = {
-  zh_en: oneOf("wrong_meaning", "unnatural", "wrong_tone", "too_long", "other"),
+  zh_en: CARD_REASONS, es_en: CARD_REASONS, en_es: CARD_REASONS,
   polish: oneOf("wrong_meaning", "unnatural", "not_needed", "too_much", "other"),
 };
 const OUTCOMES: Record<CardKind, (v: unknown) => v is string> = {
-  zh_en: oneOf("replaced", "undone", "edited", "dismissed", "turned_off", "glanced", "none"),
+  zh_en: CARD_OUTCOMES, es_en: CARD_OUTCOMES, en_es: CARD_OUTCOMES,
   polish: oneOf("accepted", "undone", "edited", "dismissed", "turned_off", "glanced", "none"),
 };
 
@@ -116,10 +121,11 @@ function parseSample(e: unknown, now: number): CleanSample | Reject {
     return { ...common, kind, ref: e.survey, cardId: null, ts: sampleTs(e.ts, now), source: comment, output: null,
       vote: null, answer: isAnswer(e.answer) ? e.answer : null };
   }
-  if (kind !== "zh_en" && kind !== "polish") return "invalid";
+  if (kind !== "zh_en" && kind !== "polish" && kind !== "es_en" && kind !== "en_es") return "invalid";
   if (typeof e.card_id !== "string" || !UUID.test(e.card_id)) return "invalid";
   if (!isVote(e.vote)) return "invalid";
-  const [srcKey, outKey] = kind === "zh_en" ? (["source_zh", "output_en"] as const) : (["source_en", "output_polished"] as const);
+  const [srcKey, outKey] = kind === "zh_en" ? (["source_zh", "output_en"] as const)
+    : kind === "polish" ? (["source_en", "output_polished"] as const) : (["source", "output"] as const);
   const source = text(e[srcKey], LIMITS[srcKey]);
   const output = text(e[outKey], LIMITS[outKey]);
   if (source === "invalid" || output === "invalid") return "invalid";
@@ -129,7 +135,7 @@ function parseSample(e: unknown, now: number): CleanSample | Reject {
     kind, ref: cardId, cardId, ts: sampleTs(e.ts, now), source, output, vote: e.vote, answer: null,
     reason: e.vote === "down" && REASONS[kind](e.reason) ? e.reason : null,
     outcome: OUTCOMES[kind](e.outcome) ? e.outcome : null,
-    tone: kind === "zh_en" && isTone(e.tone) ? e.tone : null,
+    tone: kind !== "polish" && isTone(e.tone) ? e.tone : null,
     changeSize: kind === "polish" && isChange(e.change_size) ? e.change_size : null,
     appCategory: isApp(e.app_category) ? e.app_category : null,
     lenBucket: isLen(e.len_bucket) ? e.len_bucket : null,

@@ -6,7 +6,8 @@
 import { TONES } from "./schema";
 
 export const MAX_DOC_BYTES = 64 * 1024;
-export const PLATFORMS = ["mac", "windows"] as const;
+// es-*: the Spanish Keyboard package (its own installers and release line).
+export const PLATFORMS = ["mac", "windows", "es-mac", "es-windows"] as const;
 export type Platform = (typeof PLATFORMS)[number];
 export const CHANNELS = ["stable", "test"] as const;
 
@@ -162,6 +163,6 @@ export function docName(kind: "config" | Platform, channel: string = "stable"): 
 
 export function checkDoc(name: string, body: unknown): Checked<unknown> {
   if (name === "config") return checkConfig(body);
-  if (/^update-(mac|windows)(-test)?$/.test(name)) return checkManifest(body);
+  if (/^update-(mac|windows|es-mac|es-windows)(-test)?$/.test(name)) return checkManifest(body);
   return { ok: false, error: "unknown document" };
 }

@@ -23,6 +23,19 @@ describe("parseSamples", () => {
     expect(r.batch.rejected).toEqual({ invalid: 0, filtered: 0 });
   });
 
+  it("accepts the Spanish card kinds with source/output", () => {
+    const esEn = { kind: "es_en", card_id: CARD, vote: "down", reason: "wrong_tone", outcome: "replaced", tone: "work",
+      source: "¿Puedes enviarme el archivo?", output: "Can you send me the file?" };
+    const r = parseSamples(env([esEn, { ...esEn, kind: "en_es", source: "See you", output: "Nos vemos", vote: "up" },
+      { ...esEn, kind: "es_en", source: undefined }]), NOW);
+    if (!r.ok || !("batch" in r)) throw new Error("expected batch");
+    expect(r.batch.samples.map((s) => [s.kind, s.source, s.output, s.tone])).toEqual([
+      ["es_en", esEn.source, esEn.output, "work"],
+      ["en_es", "See you", "Nos vemos", "work"],
+    ]);
+    expect(r.batch.rejected.invalid).toBe(1);
+  });
+
   it("discards non-beta builds and requests with the switch off", () => {
     expect(parseSamples(env([zhEn], { channel: "stable" }), NOW)).toEqual({ ok: true, discarded: "channel", count: 1 });
     expect(parseSamples(env([zhEn], { improve_on: false }), NOW)).toEqual({ ok: true, discarded: "improve_off", count: 1 });

@@ -216,16 +216,47 @@ export async function loadStats(f: Filters) {
       (SELECT count(*) FROM imprv WHERE imprv.day = d.day AND NOT imprv.improve_on)::int AS imp_off
     FROM d LEFT JOIN evd USING (day) LEFT JOIN tdd USING (day) ORDER BY d.day`);
   // Counts only; the dashboard never reads sample text.
-  const sampleDays = await q<{ day: string; cur: boolean; zh_en: number; polish: number; survey: number }>(`
+  const sampleDays = await q<{ day: string; cur: boolean; zh_en: number; polish: number; survey: number; es_en: number; en_es: number }>(`
     WITH d AS (SELECT generate_series(${TODAY} - ${R2 - 1}, ${TODAY}, '1 day')::date AS day),
     s AS (
       SELECT ${BATCH_DAY} AS day, count(*) FILTER (WHERE kind = 'zh_en') AS zh_en, count(*) FILTER (WHERE kind = 'polish') AS polish,
-        count(*) FILTER (WHERE kind = 'survey') AS survey
+        count(*) FILTER (WHERE kind = 'survey') AS survey,
+        count(*) FILTER (WHERE kind = 'es_en') AS es_en, count(*) FILTER (WHERE kind = 'en_es') AS en_es
       FROM samples WHERE received_at >= now() - interval '${R2 + 1} days' ${scope} GROUP BY 1
     )
     SELECT to_char(d.day, 'YYYY-MM-DD') AS day, d.day > ${TODAY} - ${R} AS cur,
-      coalesce(s.zh_en, 0)::int AS zh_en, coalesce(s.polish, 0)::int AS polish, coalesce(s.survey, 0)::int AS survey
+      coalesce(s.zh_en, 0)::int AS zh_en, coalesce(s.polish, 0)::int AS polish, coalesce(s.survey, 0)::int AS survey,
+      coalesce(s.es_en, 0)::int AS es_en, coalesce(s.en_es, 0)::int AS en_es
     FROM d LEFT JOIN s USING (day) ORDER BY d.day`);
+  // 西语版 only: cards and polish split by direction (lang_pair), direction switches, samples per kind.
+  const es = f.product === "es";
+  const byDirection = !es ? [] : await q<{ lang_pair: string; devices: number; shown: number; glanced: number; replaced: number;
+    undone: number; esc: number; up: number; down: number; p_shown: number; p_accepted: number; p_undone: number;
+    lat_n: number; lat_err: number; p50: number | null }>(`
+    SELECT props->>'lang_pair' AS lang_pair, count(DISTINCT device_id)::int AS devices,
+      count(*) FILTER (WHERE name = 'card_shown')::int AS shown,
+      count(*) FILTER (WHERE name = 'card_glanced')::int AS glanced,
+      count(*) FILTER (WHERE name = 'card_replaced' AND ${OK})::int AS replaced,
+      count(*) FILTER (WHERE name = 'card_undo_after_replace')::int AS undone,
+      count(*) FILTER (WHERE name = 'card_dismissed')::int AS esc,
+      count(*) FILTER (WHERE name IN ('card_feedback', 'polish_feedback') AND props->>'vote' = 'up')::int AS up,
+      count(*) FILTER (WHERE name IN ('card_feedback', 'polish_feedback') AND props->>'vote' = 'down')::int AS down,
+      count(*) FILTER (WHERE name = 'polish_shown')::int AS p_shown,
+      count(*) FILTER (WHERE name = 'polish_accepted' AND ${OK})::int AS p_accepted,
+      count(*) FILTER (WHERE name = 'polish_undo_after_accept')::int AS p_undone,
+      count(*) FILTER (WHERE name IN ('sentence_latency', 'polish_latency'))::int AS lat_n,
+      count(*) FILTER (WHERE name IN ('sentence_latency', 'polish_latency') AND NOT ${OK})::int AS lat_err,
+      (percentile_cont(0.5) WITHIN GROUP (ORDER BY (props->>'ms')::numeric)
+        FILTER (WHERE name IN ('sentence_latency', 'polish_latency') AND ${OK}))::int AS p50
+    FROM ${EV(R)} e WHERE props ? 'lang_pair' GROUP BY 1 ORDER BY 1`);
+  const modeSwitches = !es ? [] : await q<{ to_mode: string; via: string; n: number; devices: number }>(`
+    SELECT props->>'to_mode' AS to_mode, coalesce(props->>'via', '?') AS via, count(*)::int AS n, count(DISTINCT device_id)::int AS devices
+    FROM ${EV(R)} e WHERE name = 'mode_switched' GROUP BY 1, 2 ORDER BY 1, 2`);
+  const samplesByKind = !es ? [] : await q<{ kind: string; n: number; recent: number; devices: number; up: number; down: number }>(`
+    SELECT kind, count(*)::int AS n, count(*) FILTER (WHERE received_at >= now() - interval '${R} days')::int AS recent,
+      count(DISTINCT device_id)::int AS devices,
+      count(*) FILTER (WHERE vote = 'up')::int AS up, count(*) FILTER (WHERE vote = 'down')::int AS down
+    FROM samples WHERE TRUE ${scope} GROUP BY 1 ORDER BY 1`);
   const [sampleTotals] = await q<{ stored: number; devices: number; deletions: number }>(`
     SELECT (SELECT count(*) FROM samples WHERE TRUE ${scope})::int AS stored,
       (SELECT count(DISTINCT device_id) FROM samples WHERE TRUE ${scope})::int AS devices,
@@ -991,7 +1022,7 @@ export async function loadStats(f: Filters) {
     GROUP BY 1 ORDER BY n DESC LIMIT 15`);
 
   return {
-    range: R, otherProducts, web,
+    range: R, otherProducts, web, byDirection, modeSwitches, samplesByKind,
     ov: { series, installDaily, activeDaily, hitSeries, disruptSeries, basics, verDist, officialActive, sampleDays, sampleTotals },
     presence, meta, overview, cohorts: cohorts.n,
     q1: { retention, cohortRows, activeTrend, daily, charsDist, awayDist, enDominant, enByApp, awayTime, toKinds, activeEnglish, survey },
