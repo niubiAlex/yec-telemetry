@@ -107,6 +107,18 @@ form.filters select, form.filters button { font: inherit; font-size: 13px; }
 .how:hover .pop, .how:focus-within .pop, .how.open .pop { display: block; }
 .how .pop ul { margin: 0; padding-left: 16px; }
 .how .pop li + li { margin-top: 2px; }
+.crumbs { margin: 0 0 4px; font-size: 13px; }
+.crumbs a, a.code { color: var(--bar); text-decoration: none; }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px; }
+.scroll { overflow-x: auto; }
+table.narrow { width: auto; }
+tr.quiet td { opacity: .45; }
+table.timeline th, table.timeline td { padding: 3px 6px; font-size: 12px; }
+table.timeline thead tr:first-child th { text-align: center; border-bottom: 0; }
+table.events td:last-child { text-align: left; white-space: normal; font-size: 12px; }
+.nameform { display: inline-flex; gap: 4px; margin: 0; }
+.nameform input { font: inherit; font-size: 13px; width: 9em; padding: 1px 4px; }
+.nameform button, form.filters input { font: inherit; font-size: 13px; }
 .hint { display: block; color: var(--muted); font-size: 11px; }
 .tm .hint { grid-column: 1 / -1; }
 

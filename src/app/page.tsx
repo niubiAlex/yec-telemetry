@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
 import { How } from "./How";
+import { ADOPT_HINT, ADOPT_HOW, DISRUPT_HINT, DISRUPT_HOW, POLISH_ADOPT_HINT, POLISH_ADOPT_HOW, WEEKLY_OFF_HOW } from "./explain";
 import { DaySelect } from "./DaySelect";
 
 export const dynamic = "force-dynamic";
@@ -24,50 +25,6 @@ const OFF_SOURCE: Record<string, string> = { x_button: "点 X", shortcut: "开�
 const REASON: Record<string, string> = {
   wrong_meaning: "意思错了", unnatural: "不自然", wrong_tone: "语气不对", too_long: "太长", other: "其他", 未选: "未选",
 };
-
-const OFF_CAVEAT = "关掉翻译的设备之后不再出卡，会从分母里消失，比例会偏好看；要和问题 4 的「每周关闭设备占比」一起看。";
-const ADOPT_HINT = "成功替换的卡片 ÷ 展示的卡片，按卡片计";
-const ADOPT_HOW = (
-  <ul>
-    <li><b>分子</b>：点了替换、并且替换成功的卡片（替换失败不算）。</li>
-    <li><b>分母</b>：展示过的卡片。每张卡只算一次（按 card_id 去重）。</li>
-    <li>按卡片展示的那一天算。这里只算中译英，英文润色单独算。</li>
-    <li>没采纳<b>不算失败</b>：很多人只是瞄一眼英文怎么说，看完继续打中文。所以要和「看过率」一起看：卡片显示 ≥ 1.5 秒、并且这段时间用户停下没打字，就算看过。</li>
-    <li>{OFF_CAVEAT}</li>
-  </ul>
-);
-const POLISH_ADOPT_HINT = "成功采纳的润色建议 ÷ 展示的建议，按建议计";
-const POLISH_ADOPT_HOW = (
-  <ul>
-    <li><b>分子</b>：点了采纳、并且替换成功的润色建议。</li>
-    <li><b>分母</b>：展示过的润色建议。每条只算一次（按 card_id 去重）。</li>
-    <li>按建议展示的那一天算。和中译英分开算，不合并。</li>
-    <li>没采纳<b>不算失败</b>，要和润色的「看过率」一起看（显示 ≥ 1.5 秒且用户停下没打字）。</li>
-    <li>关掉润色的设备之后不再出建议，会从分母里消失，比例会偏好看；要和问题 4 的「每周关闭设备占比」一起看。</li>
-  </ul>
-);
-const DISRUPT_HINT = "用户明确表示「不要」的卡片 ÷ 展示的卡片，按卡片计";
-const DISRUPT_HOW = (
-  <ul>
-    <li>只算三种明确的「不想要」：
-      <b>关掉卡片</b>（点卡片上的 ×、按开关快捷键 Shift+Esc、在设置里关）、<b>按 Esc</b>、
-      <b>出卡后切走</b>（卡片还在显示时、或消失后 30 秒内切到别的输入法）。</li>
-    <li>卡片自己消失（继续打字、换输入框、换应用）<b>不算</b>打扰。</li>
-    <li>一张卡有多种操作时只算一次，归到最先发生的那种，所以 关掉 + Esc + 切走 = 打扰率。</li>
-    <li><b>分母</b>：展示过的卡片（按 card_id 去重），按卡片展示的那一天算。</li>
-    <li>中译英和润色<b>分开算</b>，各自的分母是自己那类展示过的卡片；「合计」是两类放在一起算。</li>
-    <li>对不上任何卡片的关闭（比如几小时没出卡后去设置里关）不进打扰率，只算进「每周关闭设备占比」。</li>
-    <li>{OFF_CAVEAT}</li>
-  </ul>
-);
-const WEEKLY_OFF_HOW = (
-  <ul>
-    <li><b>分母</b>：这一周（周一到周日）出过卡的设备。</li>
-    <li><b>分子</b>：其中这一周至少关过 1 次的设备：点 ×、按开关快捷键 Shift+Esc、或在设置里关。不要求对得上某张卡片，所以对不上卡片、不进打扰率的关闭也算在这里。</li>
-    <li>中译英和润色分开算（分母是出过这类卡的设备），「合计」是任一类。</li>
-    <li>关掉的设备之后不再出卡，会从采纳率、看过率、打扰率的分母里消失。这个比例越高，那些比率越偏好看。</li>
-  </ul>
-);
 
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "–");
 const pctOf = (v: number | null | undefined) => (v == null ? "–" : `${Math.round(v * 100)}%`);
@@ -580,7 +537,7 @@ export default async function Page({ searchParams }: {
 
   return (
     <main>
-      <h1>有道输入 · Beta 指标</h1>
+      <h1>有道输入 · Beta 指标 <small className="more"><a href="/users">用户 →</a></small></h1>
       <p className="sub">
         上面是总览：每格是所选那一天的值，小柱是范围内每天（悬停看数值），点格子展开逐日表，「详情 ↓」跳到对应问题。匿名统计，只有计数、枚举和错误码。日期按北京时间。
         <Pending need="" /> 表示客户端还没开始发需要的事件，不是 0。

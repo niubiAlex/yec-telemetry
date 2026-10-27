@@ -74,6 +74,12 @@ ALTER TABLE samples ALTER COLUMN vote DROP NOT NULL;
 UPDATE samples SET ref = card_id::text WHERE ref IS NULL AND card_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS samples_device_kind_ref ON samples (device_id, kind, ref);
 ALTER TABLE samples DROP CONSTRAINT IF EXISTS samples_device_id_kind_card_id_key;
+-- 备注名 for invited beta users, set on the dashboard's 用户 page.
+CREATE TABLE IF NOT EXISTS device_names (
+  device_id   uuid PRIMARY KEY,
+  name        text NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS remote_docs (
   name        text PRIMARY KEY,
   body        jsonb NOT NULL,
