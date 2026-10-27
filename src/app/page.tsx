@@ -129,6 +129,12 @@ function Question({ n, title, ask, children }: { n: number; title: string; ask: 
 }
 
 const WINDOWS = [1, 3, 7, 14] as const;
+/** Last day of each retention window: 第 3 / 7 / 14 天 count any of days 3–4 / 7–9 / 14–16. */
+const WINDOW_END: Record<number, number> = { 1: 1, 3: 4, 7: 9, 14: 16 };
+const windowText = (k: number) => (WINDOW_END[k] === k ? `第 ${k} 天` : `第 ${k}–${WINDOW_END[k]} 天的时间窗`);
+/** MM-DD of the first day on which a window ending `end` days after `d0` (YYYY-MM-DD) has data. */
+const readyOn = (d0: string, end: number) =>
+  new Date(Date.parse(`${d0}T00:00:00Z`) + (end + 1) * 86_400_000).toISOString().slice(5, 10);
 
 function Curve({ active, main }: { active: (number | null)[]; main: (number | null)[] }) {
   const W = 360, H = 140, P = 28;
@@ -227,7 +233,8 @@ export default async function Page({ searchParams }: {
               <td>{w ? (cohort === "day" ? w : `${w} 那周`) : "全部"}</td><td>{w ? cohortSize[w] : s.cohorts}</td>
               {WINDOWS.map((k) => {
                 const r = cell(w, k);
-                if (!r) return <td key={k} className="muted" title="时间窗还没结束">—</td>;
+                if (!r) return <td key={k} className="muted" title={!w ? `还没有设备的${windowText(k)}结束`
+                  : `${cohort === "week" ? "最早" : ""}要等 ${readyOn(w, WINDOW_END[k])} 才有数（${windowText(k)}还没结束）`}>—</td>;
                 if (!ready) return <td key={k}><Pending need={NEED_DAILY} /></td>;
                 return <td key={k}>{pct(r[which], r.den)} <small>({r[which]}/{r.den})</small></td>;
               })}
@@ -366,14 +373,17 @@ export default async function Page({ searchParams }: {
     );
   }
 
-  function DayTable({ items, right }: { items: DTile[]; right?: boolean }) {
+  type Lead = { label: string; title: string; value: (d: string) => ReactNode };
+  function DayTable({ items, right, lead }: { items: DTile[]; right?: boolean; lead?: Lead }) {
     return (
       <div className={right ? "dt right" : "dt"}>
         <table>
-          <thead><tr><th scope="col">日期</th>{items.map((m) => <th key={m.label} scope="col">{m.label}</th>)}</tr></thead>
+          <thead><tr><th scope="col">日期</th>{lead && <th scope="col" title={lead.title}>{lead.label}</th>}
+            {items.map((m) => <th key={m.label} scope="col">{m.label}</th>)}</tr></thead>
           <tbody>{[...days].reverse().map((d) => (
             <tr key={d} className={d === day ? "sel" : undefined}>
               <td>{dayLink(d) ? <a href={dayLink(d) as string}>{d.slice(5)}</a> : d.slice(5)}{d === today ? " 今天" : ""}</td>
+              {lead && <td>{lead.value(d)}</td>}
               {items.map((m) => { const p = m.pts[d]; return <td key={m.label} title={p?.detail}>{m.fmt(p?.v ?? null)}
                 {p?.detail && items.length === 1 && <small> {p.detail}</small>}</td>; })}
             </tr>
@@ -426,10 +436,15 @@ export default async function Page({ searchParams }: {
 
   // ---------- 五个问题 ----------
   const instPts = (k: number, which: "active" | "main") => byDay(ov.installDaily.filter((r) => r.k === k), (r) =>
-    !r.done ? { v: null, base: r.den, detail: r.den ? `${r.den} 台，时间窗没结束` : "当天无新装" }
+    !r.den ? { v: null, base: 0, detail: "当天无新装，没有可算的设备" }
+      : !r.done ? { v: null, base: r.den, detail: `要等 ${readyOn(r.day, WINDOW_END[k])} 才有数（${windowText(k)}还没结束）` }
       : { v: ratio(r[which], r.den), base: r.den, detail: `${r[which]} / ${r.den}` });
   const actPts = (k: number) => byDay(ov.activeDaily.filter((r) => r.k === k), (r) =>
-    !r.done ? { v: null, base: r.den, detail: `${r.den} 台，第 ${k} 天还没过完` } : { ...rateP(r.ret, r.den) });
+    !r.den ? { v: null, base: 0, detail: "当天无活跃设备，没有可算的设备" }
+      : !r.done ? { v: null, base: r.den, detail: `要等 ${readyOn(r.day, k)} 才有数（第 ${k} 天还没过完）` } : { ...rateP(r.ret, r.den) });
+  const cohortLead: Lead = rc === "active"
+    ? { label: "当天活跃", title: "这一天活跃的设备数，是这一行各列的分母", value: (d) => ov.activeDaily.find((r) => r.day === d)?.den ?? 0 }
+    : { label: "当天新装", title: "这一天新安装的设备数，是这一行各列的分母", value: (d) => ov.installDaily.find((r) => r.day === d)?.den ?? 0 };
   const instTile = (k: number, which: "active" | "main"): DTile => ({
     label: `${which === "main" ? "主力" : "活跃"} · 第 ${k} 天`, pts: instPts(k, which), fmt: fPct, rate: true,
     ready: which === "main" ? dailyChars : true, need: NEED_DAILY, note: which === "main" ? undefined : retInterim });
@@ -443,8 +458,8 @@ export default async function Page({ searchParams }: {
   const disruptTile = (type: string | null, label: string, ready: boolean): DTile => ({
     label, lowerIsBetter: true, fmt: fPct, rate: true, ready, need: "translation_turned_off、card_id",
     pts: byDay(ov.disruptSeries.filter((r) => r.type === type), (r) => rateP(intr(r), r.shown)) });
-  const tiles: { q: number; title: string; sub?: string; items: DTile[]; table?: DTile[] }[] = [
-    { q: 1, title: "真需求 · 留存", items: retItems, table: retTable,
+  const tiles: { q: number; title: string; sub?: string; items: DTile[]; table?: DTile[]; lead?: Lead }[] = [
+    { q: 1, title: "真需求 · 留存", items: retItems, table: retTable, lead: cohortLead,
       sub: rc === "active" ? `${day.slice(5)} 活跃的 ${actDen} 台` : `${day.slice(5)} 安装的 ${instDen} 台` },
     { q: 2, title: "只打中文", items: [{ label: "首选命中率（中位数）", pts: byDay(ov.hitSeries, (r) => ({ v: r.hit, base: r.n, detail: `${r.n} 设备·天` })),
       fmt: fPct, rate: true, ready: has("typing_stats", "first_hit"), need: "typing_stats" }] },
@@ -522,7 +537,7 @@ export default async function Page({ searchParams }: {
                     {m.hint && <small className="hint">{m.hint}</small>}</div>
                 ))}
               </summary>
-              {(t.table ?? t.items).some((m) => m.ready) && <DayTable items={(t.table ?? t.items).filter((m) => m.ready)} right={i >= 3} />}
+              {(t.table ?? t.items).some((m) => m.ready) && <DayTable items={(t.table ?? t.items).filter((m) => m.ready)} right={i >= 3} lead={t.lead} />}
             </details>
           ))}
         </div>
@@ -624,19 +639,20 @@ export default async function Page({ searchParams }: {
           <section><h4>活跃留存（按安装{cohort === "day" ? "日" : "周"}）</h4><RetentionTable which="active" ready={activeReady} /></section>
           <section><h4>主力留存（按安装{cohort === "day" ? "日" : "周"}）</h4><RetentionTable which="main" ready={dailyChars} /></section>
         </div>
-        <h4 id="q1-daily">逐日分组（{RL}，每行一天；时间窗没结束显示「—」）</h4>
+        <h4 id="q1-daily">逐日分组（{RL}，每行一天；「—」= 时间窗还没结束，悬停看哪天才有数）</h4>
         <div className="grid">
           <section><h4>按安装日：当天安装的设备第 N 天还在{retInterim ? `（${retInterim}）` : ""}</h4>
             {(
               <table>
-                <thead><tr><th scope="col">安装日</th><th scope="col">设备</th>
+                <thead><tr><th scope="col">安装日</th><th scope="col">当天新装</th>
                   {WINDOWS.map((k) => <th key={k} scope="col">活跃 第 {k} 天</th>)}<th scope="col">主力 第 7 天</th></tr></thead>
                 <tbody>{[...days].reverse().map((d) => {
                   const rs = ov.installDaily.filter((r) => r.day === d);
                   const c = (k: number, which: "active" | "main") => {
                     const r = rs.find((x) => x.k === k);
-                    if (!r || !r.den) return <td key={`${which}${k}`} className="muted">–</td>;
-                    if (!r.done) return <td key={`${which}${k}`} className="muted" title="时间窗没结束">—</td>;
+                    if (!r || !r.den) return <td key={`${which}${k}`} className="muted" title="当天无新装，没有可算的设备">–</td>;
+                    if (!r.done) return <td key={`${which}${k}`} className="muted"
+                      title={`要等 ${readyOn(d, WINDOW_END[k])} 才有数（${windowText(k)}还没结束）`}>—</td>;
                     if (which === "main" && !dailyChars) return <td key={`${which}${k}`}><Pending need={NEED_DAILY} /></td>;
                     return <td key={`${which}${k}`}>{pct(r[which], r.den)} <small>({r[which]}/{r.den})</small></td>;
                   };
@@ -649,7 +665,7 @@ export default async function Page({ searchParams }: {
             )}</section>
           <section><h4>按当天活跃：当天活跃的设备第 1 / 3 / 7 天回来{retInterim ? `（${retInterim}）` : ""}</h4>
             <table>
-              <thead><tr><th scope="col">活跃日</th><th scope="col">设备</th>
+              <thead><tr><th scope="col">活跃日</th><th scope="col">当天活跃</th>
                 {[1, 3, 7].map((k) => <th key={k} scope="col">第 {k} 天</th>)}</tr></thead>
               <tbody>{[...days].reverse().map((d) => {
                 const rs = ov.activeDaily.filter((r) => r.day === d);
@@ -657,8 +673,8 @@ export default async function Page({ searchParams }: {
                   <tr key={d} className={d === day ? "sel" : undefined}><td>{d}</td><td>{rs[0]?.den ?? 0}</td>
                     {[1, 3, 7].map((k) => {
                       const r = rs.find((x) => x.k === k);
-                      if (!r || !r.den) return <td key={k} className="muted">–</td>;
-                      if (!r.done) return <td key={k} className="muted" title="那一天还没过完">—</td>;
+                      if (!r || !r.den) return <td key={k} className="muted" title="当天无活跃设备，没有可算的设备">–</td>;
+                      if (!r.done) return <td key={k} className="muted" title={`要等 ${readyOn(d, k)} 才有数（第 ${k} 天还没过完）`}>—</td>;
                       return <td key={k}>{pct(r.ret, r.den)} <small>({r.ret}/{r.den})</small></td>;
                     })}</tr>
                 );
