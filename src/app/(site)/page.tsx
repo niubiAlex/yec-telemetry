@@ -4,6 +4,7 @@ import {
   AUDIENCES, FAQ, GIFT, JOIN_CTA, PRODUCT, SLOGAN, SLOGAN_EN, SLOGAN_LEARN, SLOGAN_LEARN_EN, TRIAL, VIDEOS, WECHAT_GROUP, WECHAT_QR,
 } from "./content";
 import { TryBox, TryButton } from "./TryBox";
+import { Track } from "./Track";
 
 export const runtime = "nodejs";
 export const revalidate = 300;
@@ -85,17 +86,17 @@ function Audiences({ pillar }: { pillar: Pillar }) {
   ));
 }
 
-function DownloadButton({ d, label }: { d: Download | null; label: string }) {
+function DownloadButton({ d, label, platform }: { d: Download | null; label: string; platform: "mac" | "windows" }) {
   if (!d) {
     return (
-      <a className="dl off" href="#join">
+      <a className="dl off" href="#join" data-track="join_click" data-from="dl_off">
         {label}
         <small>暂时取不到安装包，请扫码进群获取</small>
       </a>
     );
   }
   return (
-    <a className="dl" href={d.href} download={d.filename}>
+    <a className="dl" href={d.href} download={d.filename} data-track="download_click" data-platform={platform}>
       {label}
       <small>{["版本 " + d.version, megabytes(d.size)].filter(Boolean).join(" · ")}</small>
     </a>
@@ -151,7 +152,7 @@ export default async function Home() {
                 </a>
               </div>
               <div className="btns">
-                <a className="btn btn-primary" href="#join">扫码进群</a>
+                <a className="btn btn-primary" href="#join" data-track="join_click" data-from="hero">扫码进群</a>
                 <a className="btn btn-secondary" href="#download">下载 Mac / Windows 版</a>
               </div>
               <p className="perk"><span className="gifticon" aria-hidden="true">礼</span>{GIFT}</p>
@@ -323,12 +324,12 @@ export default async function Home() {
             <h2>下载{PRODUCT}</h2>
             <p className="sub">安装后在系统的输入法列表里选「有道 AI 输入法」{renamed(mac, win) ? "" : "（当前版本在列表里暂时显示为「有道输入」）"}，跟着新手引导走一遍就好。之后有新版本，输入法里会提示更新。</p>
             <div className="dls">
-              <DownloadButton d={mac} label="下载 Mac 版" />
-              <DownloadButton d={win} label="下载 Windows 版" />
+              <DownloadButton d={mac} label="下载 Mac 版" platform="mac" />
+              <DownloadButton d={win} label="下载 Windows 版" platform="windows" />
             </div>
             <div className="reqs">
               <p>Mac：macOS 26 及以上，Apple 芯片（M 系列）。Windows：Windows 10 / 11，64 位。</p>
-              <p>别忘了<a href="#join">扫码进群</a>，领取内测专属福利、随时反馈。</p>
+              <p>别忘了<a href="#join" data-track="join_click" data-from="download">扫码进群</a>，领取内测专属福利、随时反馈。</p>
             </div>
           </div>
         </section>
@@ -405,6 +406,7 @@ export default async function Home() {
         </div>
         <div className="footlegal">{PRODUCT}（内测版）</div>
       </footer>
+      <Track />
     </>
   );
 }

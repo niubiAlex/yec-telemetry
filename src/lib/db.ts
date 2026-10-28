@@ -119,6 +119,23 @@ CREATE TABLE IF NOT EXISTS typing_log (
 );
 CREATE INDEX IF NOT EXISTS typing_log_device_ts ON typing_log (device_id, ts);
 CREATE INDEX IF NOT EXISTS typing_log_received ON typing_log (received_at);
+-- Homepage stats (lib/hits.ts). visitor = the day's salted hash of IP + UA; no IP, URL or typed text.
+CREATE TABLE IF NOT EXISTS web_hits (
+  id           bigserial PRIMARY KEY,
+  site         text NOT NULL,
+  ts           timestamptz NOT NULL DEFAULT now(),
+  day          date NOT NULL,
+  visitor      text NOT NULL,
+  name         text NOT NULL,
+  device       text NOT NULL,
+  ref          text,
+  utm_source   text,
+  utm_medium   text,
+  utm_campaign text,
+  props        jsonb NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS web_hits_site_day ON web_hits (site, day, name);
+CREATE INDEX IF NOT EXISTS web_hits_visitor ON web_hits (day, visitor);
 `;
 
 let ready: Promise<void> | undefined;

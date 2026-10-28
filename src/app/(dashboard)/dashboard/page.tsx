@@ -4,6 +4,8 @@ import { PRODUCTS, productParam, type Product } from "@/lib/product";
 import { How } from "../How";
 import { ADOPT_HINT, ADOPT_HOW, DISRUPT_HINT, DISRUPT_HOW, POLISH_ADOPT_HINT, POLISH_ADOPT_HOW, WEEKLY_OFF_HOW } from "../explain";
 import { DaySelect } from "../DaySelect";
+import { loadHomeStats } from "@/lib/webstats";
+import { VIDEOS } from "@/app/(site)/content";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -116,14 +118,14 @@ function Curve({ active, main }: { active: (number | null)[]; main: (number | nu
   );
 }
 
-function Trend({ rows }: { rows: { label: string; active: number; main: number }[] }) {
+function Trend({ rows, aria = "每日活跃设备与主力设备" }: { rows: { label: string; active: number; main: number }[]; aria?: string }) {
   const W = 720, H = 160, P = 28;
   const max = Math.max(1, ...rows.map((r) => r.active));
   const x = (i: number) => P + (i * (W - 2 * P)) / Math.max(1, rows.length - 1);
   const y = (v: number) => H - P - (v / max) * (H - 2 * P);
   const line = (k: "active" | "main") => rows.map((r, i) => `${x(i)},${y(r[k])}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="curve wide" role="img" aria-label="每日活跃设备与主力设备">
+    <svg viewBox={`0 0 ${W} ${H}`} className="curve wide" role="img" aria-label={aria}>
       {[0, 0.5, 1].map((v) => (
         <g key={v}><line x1={P} x2={W - P} y1={y(v * max)} y2={y(v * max)} className="grid" />
           <text x={2} y={y(v * max) + 4}>{Math.round(v * max)}</text></g>
@@ -132,6 +134,96 @@ function Trend({ rows }: { rows: { label: string; active: number; main: number }
       <polyline points={line("active")} className="l-active" />
       <polyline points={line("main")} className="l-main" />
     </svg>
+  );
+}
+
+const DEVICE: Record<string, string> = { desktop: "电脑", mobile: "手机 / 平板" };
+const VIDEO = Object.fromEntries(VIDEOS.map((v) => [v.id, v.title]));
+const JOIN_FROM: Record<string, string> = { hero: "首屏按钮", download: "下载区链接", dl_off: "无安装包时的下载按钮", "?": "未知" };
+const TRY_SOURCE: Record<string, string> = {
+  example: "示例句", model: "真翻译", limited: "超过每日上限", not_chinese: "不是中文", empty: "无结果", error: "出错", "?": "未知",
+};
+const PLATFORM: Record<string, string> = { mac: "Mac", windows: "Windows" };
+
+function HomeSection({ home, RL }: { home: Awaited<ReturnType<typeof loadHomeStats>> | null; RL: string }) {
+  if (!home) {
+    return <section id="home"><h2>官网 yec.askheadline.com · {RL}</h2><p className="empty">读取失败</p></section>;
+  }
+  const sum = (k: Exclude<keyof (typeof home.daily)[number], "day">) => home.daily.reduce((a, r) => a + r[k], 0);
+  const f = home.funnel;
+  const steps = [
+    { label: "访客", n: f.visitors },
+    { label: "试过翻译框", n: f.tried },
+    { label: "点了下载", n: f.clicked },
+    { label: "真的下载了", n: f.downloaded },
+  ];
+  const browserDl = home.downloads.filter((d) => d.client === "browser");
+  const appDl = home.downloads.filter((d) => d.client === "app");
+  return (
+    <section id="home">
+      <h2>官网 yec.askheadline.com · {RL}</h2>
+      <p className="note">
+        官网自己记的计数（web_hits 表，site = yec_web），不经第三方。访客 = 当天 IP + 浏览器标识加盐哈希，不存 IP、不设跟踪 Cookie，每天换一次，
+        所以范围内的访客是「人·天」相加：同一个人来了 3 天算 3。爬虫、预览机器人和打开过这个看板的浏览器不计。
+        翻译框只记次数和结果类型，不记文字。下载是服务器看到的安装包请求（从第一个字节开始的 GET，同一访客同一文件一天算一次），
+        浏览器发起的才算官网下载；文件是否传完看不到。
+      </p>
+      <div className="kpis">
+        <Kpi big label="访客（人·天）" value={sum("visitors")} />
+        <Kpi label="浏览" value={sum("views")} />
+        <Kpi label="翻译框试用次数" value={sum("tries")} hint={`${sum("tried")} 位访客`} />
+        <Kpi label="视频播放" value={sum("videos")} />
+        <Kpi label="看到进群二维码" value={sum("join_views")} hint="访客数" />
+        <Kpi label="点「扫码进群」" value={sum("join_clicks")} />
+        <Kpi label="点下载" value={sum("click_mac") + sum("click_windows")} hint={`Mac ${sum("click_mac")} · Windows ${sum("click_windows")}`} />
+        <Kpi big label="下载安装包" value={sum("dl_mac") + sum("dl_windows")} hint={`Mac ${sum("dl_mac")} · Windows ${sum("dl_windows")}`} />
+      </div>
+      <h4>每日<span className="k-active">浏览</span>和<span className="k-main">访客</span></h4>
+      <Trend rows={home.daily.map((r) => ({ label: r.day.slice(5), active: r.views, main: r.visitors }))} aria="官网每日浏览和访客" />
+      <div className="grid">
+        <div>
+          <h4>转化漏斗（人·天）</h4>
+          <table>
+            <thead><tr><th scope="col">步骤</th><th scope="col">人数</th><th scope="col">占访客</th><th scope="col">占上一步</th><th /></tr></thead>
+            <tbody>{steps.map((st, i) => (
+              <tr key={st.label}><td>{st.label}</td><td>{st.n}</td><td>{pct(st.n, f.visitors)}</td>
+                <td>{i === 0 ? "–" : pct(st.n, steps[i - 1].n)}</td>
+                <td className="bar" aria-hidden="true"><i style={{ width: `${f.visitors ? (st.n / f.visitors) * 100 : 0}%` }} /></td></tr>
+            ))}</tbody>
+          </table>
+          <p className="note">每一步都只算浏览过首页的访客；「点了下载」不要求试过翻译框。</p>
+        </div>
+        <div>
+          <h4>下载安装包（按平台和版本）</h4>
+          {browserDl.length === 0 ? <p className="empty">暂无数据</p> : (
+            <Bars rows={browserDl.map((d) => ({ label: `${PLATFORM[d.platform] ?? d.platform} ${d.version}`, n: d.n }))} />
+          )}
+          {appDl.length > 0 && (
+            <p className="note">另有输入法自己下载的更新包（不算官网下载）：
+              {appDl.map((d) => `${PLATFORM[d.platform] ?? d.platform} ${d.version} × ${d.n}`).join("，")}。</p>
+          )}
+        </div>
+        <div><h4>来源（浏览）</h4><Bars rows={home.refs} /></div>
+        <div><h4>UTM（source / medium / campaign）</h4><Bars rows={home.utms} /></div>
+        <div><h4>设备（访客）</h4><Bars rows={home.devices} label={(d) => DEVICE[d] ?? d} /></div>
+        <div><h4>视频播放</h4><Bars rows={home.videos} label={(v) => VIDEO[v] ?? v} /></div>
+        <div><h4>翻译框结果</h4><Bars rows={home.tries} label={(t) => TRY_SOURCE[t] ?? t} /></div>
+        <div><h4>点「扫码进群」的位置</h4><Bars rows={home.joins} label={(j) => JOIN_FROM[j] ?? j} /></div>
+      </div>
+      <details>
+        <summary>逐日明细</summary>
+        <table className="narrow">
+          <thead><tr><th scope="col">日期</th><th scope="col">访客</th><th scope="col">浏览</th><th scope="col">试用</th>
+            <th scope="col">试用访客</th><th scope="col">视频</th><th scope="col">看到二维码</th><th scope="col">点进群</th>
+            <th scope="col">点下载 Mac</th><th scope="col">点下载 Win</th><th scope="col">下载 Mac</th><th scope="col">下载 Win</th></tr></thead>
+          <tbody>{[...home.daily].reverse().map((r) => (
+            <tr key={r.day}><td>{r.day}</td><td>{r.visitors}</td><td>{r.views}</td><td>{r.tries}</td><td>{r.tried}</td><td>{r.videos}</td>
+              <td>{r.join_views}</td><td>{r.join_clicks}</td><td>{r.click_mac}</td><td>{r.click_windows}</td>
+              <td>{r.dl_mac}</td><td>{r.dl_windows}</td></tr>
+          ))}</tbody>
+        </table>
+      </details>
+    </section>
   );
 }
 
@@ -153,6 +245,14 @@ export default async function Page({ searchParams }: {
   } catch (err) {
     console.error(err);
     return <main><h1>读取失败</h1><p className="sub">数据库不可用，检查 DATABASE_URL。</p></main>;
+  }
+  let home: Awaited<ReturnType<typeof loadHomeStats>> | null = null;
+  if (product === "zh") {
+    try {
+      home = await loadHomeStats(range);
+    } catch (err) {
+      console.error("homepage stats", err instanceof Error ? err.message : "unknown");
+    }
   }
   const P: Presence = s.presence;
   const has = (name: string, key?: string) => name in P && (!key || P[name].includes(key));
@@ -570,6 +670,7 @@ export default async function Page({ searchParams }: {
             {s.otherProducts.map((o) => `${o.product}（${o.devices} 台）`).join("、")}。</b>
         )}
       </p>
+      {product === "zh" && <HomeSection home={home} RL={RL} />}
       {product === "es" && (
         <section>
           <h2>西语官网（网页试用）· {RL}</h2>

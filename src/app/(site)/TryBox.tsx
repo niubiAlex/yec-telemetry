@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import { MAX_INPUT, PRESETS, preset, type TryReply } from "@/lib/try/presets";
 import { TONE_KEYS, type Result, type ToneKey } from "@/lib/try/prompt";
 import { PER_DAY, PRODUCT, TONE_LABEL, TRY_EVENT } from "./content";
+import { track } from "./Track";
 
 type Card =
   | { status: "idle" }
@@ -40,6 +41,7 @@ export function TryBox() {
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const req = useRef(0);
   const cache = useRef(new Map<string, Card>());
+  const shownPresets = useRef(new Set<string>());
 
   const run = async (s: string) => {
     const hit = cache.current.get(s);
@@ -70,7 +72,13 @@ export function TryBox() {
     const s = value.trim();
     if (!s) { req.current++; setCard({ status: "idle" }); return; }
     const p = preset(s);
-    if (p) { req.current++; setCard({ status: "ready", forText: s, example: true, result: p.result }); return; }
+    if (p) {
+      req.current++;
+      setCard({ status: "ready", forText: s, example: true, result: p.result });
+      // Examples are answered here, so /api/try never counts them.
+      if (!shownPresets.current.has(s)) { shownPresets.current.add(s); track("try", { source: "example" }); }
+      return;
+    }
     if (hanCount(s) < 2) return;
     timer.current = setTimeout(() => { if (!composing.current) void run(s); }, PAUSE_MS);
   };

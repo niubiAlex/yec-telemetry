@@ -3,6 +3,8 @@ import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE, allow, newVisitorCookie, verify
 import { available, translate } from "@/lib/try/model";
 import { MAX_INPUT, preset, type TryReply } from "@/lib/try/presets";
 import { isChinese, isToneKey } from "@/lib/try/prompt";
+import { STAFF_COOKIE, isBot } from "@/lib/hits";
+import { clientIp, recordHit } from "@/lib/webstats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +20,12 @@ export async function POST(req: NextRequest) {
   if (!chinese || [...chinese].length > MAX_INPUT) return NextResponse.json({ error: "input" }, { status: 400 });
 
   const visitor = verifyVisitorCookie(req.cookies.get(VISITOR_COOKIE)?.value);
-  const reply = (r: TryReply) => {
+  const ua = req.headers.get("user-agent") ?? "";
+  const reply = async (r: TryReply) => {
+    // Homepage stats get the outcome only.
+    if (ua && !isBot(ua) && !req.cookies.has(STAFF_COOKIE)) {
+      await recordHit({ name: "try", props: { source: r.source } }, clientIp(req), ua);
+    }
     const res = NextResponse.json(r, { headers: { "cache-control": "no-store" } });
     if (!visitor) {
       res.cookies.set(VISITOR_COOKIE, newVisitorCookie(), {
