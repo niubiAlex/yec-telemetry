@@ -86,3 +86,20 @@ export async function windowsDownload(): Promise<Download | null> {
 }
 
 export const megabytes = (n: number | null) => (n ? `${Math.round(n / 1e6)} MB` : "");
+
+/** a > b for dotted version numbers. */
+export function newer(a: string, b: string): boolean {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  }
+  return false;
+}
+
+/** The last releases whose input menu still says 「有道输入」; the next ones say 「有道 AI 输入法」. */
+export const LAST_OLD_NAME = { mac: "0.2.6", windows: "0.2.5" };
+
+/** Whether both offered installers already carry the new name. */
+export const renamed = (mac: Download | null, win: Download | null) =>
+  !!mac && !!win && newer(mac.version, LAST_OLD_NAME.mac) && newer(win.version, LAST_OLD_NAME.windows);

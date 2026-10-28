@@ -8,7 +8,7 @@ import { basicPassword, safeEqual } from "@/lib/auth";
 // pages, which stay behind it. The public homepage is `/` and its files
 // under /home/.
 export const config = {
-  matcher: ["/((?!api/events|api/samples|api/typing|api/web|api/config|api/update|api/admin|dl/|home/|_next/static|_next/image|favicon.ico|icon.svg|robots.txt).*)"],
+  matcher: ["/((?!api/events|api/samples|api/typing|api/web|api/config|api/update|api/admin|api/try|dl/|home/|_next/static|_next/image|favicon.ico|icon.svg|robots.txt).*)"],
 };
 
 /** The dashboard used to live at `/`; these are its query parameters. */

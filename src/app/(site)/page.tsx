@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { macDownload, megabytes, windowsDownload, type Download } from "@/lib/site";
+import { macDownload, megabytes, renamed, windowsDownload, type Download } from "@/lib/site";
 import { AUDIENCES, CONTACT, CONTACT_IS_PLACEHOLDER, FAQ, GIFT, PRODUCT, SLOGAN, TRIAL, VIDEOS } from "./content";
-import { HeroCard } from "./HeroCard";
+import { TryBox, TryButton } from "./TryBox";
 
 export const runtime = "nodejs";
 export const revalidate = 300;
@@ -28,9 +28,9 @@ function Shot({ src, alt, caption, w, h }: { src: string; alt: string; caption?:
   );
 }
 
-function Feature({ icon, title, children, shot, flip }: { icon: string; title: string; children: ReactNode; shot: ReactNode; flip?: boolean }) {
+function Feature({ id, icon, title, children, shot, flip }: { id?: string; icon: string; title: string; children: ReactNode; shot: ReactNode; flip?: boolean }) {
   return (
-    <article className={flip ? "feat flip" : "feat"}>
+    <article id={id} className={flip ? "feat flip" : "feat"}>
       <div>
         <span className="ficon" aria-hidden="true">{icon}</span>
         <h3 style={{ fontSize: 26 }}>{title}</h3>
@@ -112,7 +112,7 @@ export default async function Home() {
                 </div>
               </div>
             </div>
-            <HeroCard />
+            <TryBox />
           </div>
         </section>
 
@@ -155,6 +155,7 @@ export default async function Home() {
                 <p className="en note">if you order more than 2000 pcs, we can give you 5% discount<br />→ If you order more than 2000 pcs, we can offer you a 5% discount.</p>
               </Feature>
               <Feature
+                id="learn"
                 flip
                 icon="学"
                 title="边打字边学：新词、句子自动收进来"
@@ -202,7 +203,7 @@ export default async function Home() {
             <p className="sub center">两段短片，画面里的输入法操作都是真实录屏。点播放才会加载，默认不自动播放。</p>
             <div className="videos">
               {VIDEOS.map((v) => (
-                <article className="vcard" key={v.id}>
+                <article className="vcard" id={`video-${v.id}`} key={v.id}>
                   <video className="v-wide" controls preload="none" playsInline poster={`/home/poster-${v.id}.webp`}
                     src={`/dl/site/promo-${v.id}-16x9.mp4`} aria-label={`${v.title}宣传片`} />
                   <video className="v-tall" controls preload="none" playsInline poster={`/home/poster-${v.id}-v.webp`}
@@ -220,14 +221,18 @@ export default async function Home() {
         <section className="band" id="who">
           <div className="wrap">
             <h2 className="center">谁适合来试试</h2>
-            <p className="sub center">平时用中文想、要用英文发出去的人。下面三类朋友，我们尤其想听听你的感受。</p>
+            <p className="sub center">平时用中文想、要用英文发出去的人，或者想在日常里把英语用起来的人。下面三类朋友，我们尤其想听听你的感受。</p>
             <div className="auds">
               {AUDIENCES.map((a) => (
                 <article className="aud" key={a.id}>
                   <div className="tag">{a.tag}</div>
                   <h3>{a.title}</h3>
                   <p>{a.body}</p>
-                  <div className="chips">{a.examples.map((e) => <span className="chip" key={e}>{e}</span>)}</div>
+                  <div className="chips">{a.chips.map((e) => <span className="chip" key={e}>{e}</span>)}</div>
+                  <div className="audacts">
+                    <TryButton text={a.tryText} />
+                    <a className="audlink" href={a.link.href}>{a.link.label} →</a>
+                  </div>
                 </article>
               ))}
             </div>
@@ -263,7 +268,7 @@ export default async function Home() {
           <div className="wrap">
             <span className="eyebrow">内测版</span>
             <h2>下载{PRODUCT}</h2>
-            <p className="sub">安装后在输入法列表里选「有道输入」，跟着新手引导走一遍就好。之后有新版本，输入法里会提示更新。</p>
+            <p className="sub">安装后在系统的输入法列表里选「有道 AI 输入法」{renamed(mac, win) ? "" : "（当前版本在列表里暂时显示为「有道输入」）"}，跟着新手引导走一遍就好。之后有新版本，输入法里会提示更新。</p>
             <div className="dls">
               <DownloadButton d={mac} label="下载 Mac 版" />
               <DownloadButton d={win} label="下载 Windows 版" />
@@ -311,7 +316,7 @@ export default async function Home() {
               <ul>
                 <li>密码框里的输入，以及含 6 位以上连续数字、邮箱或网址的内容，一律不上传。</li>
                 <li>永远不收集窗口标题、网址、联系人、聊天对象和剪贴板内容。</li>
-                <li>只有有道输入团队里负责检查效果的少数成员能看到；不给第三方，不用于广告，也不用来训练模型。</li>
+                <li>只有{PRODUCT}团队里负责检查效果的少数成员能看到；不给第三方，不用于广告，也不用来训练模型。</li>
                 <li>每条最多保存 90 天，Beta 结束后全部删除。在「设置 → 隐私」里可以随时关掉，并删除已上传的内容。</li>
               </ul>
             </div>
