@@ -1,6 +1,8 @@
 import { db, ensureSchema } from "./db";
 import { SITE, beijingDay, device, hitSecret, visitorId, type Hit } from "./hits";
 
+export const TEST_SOURCE = "stats-test";
+
 /** Per visitor per day; anything past this is a script, not a person. */
 const DAILY_CAP = 300;
 
@@ -40,7 +42,9 @@ export interface Label { label: string; n: number }
 export async function loadHomeStats(days: number) {
   await ensureSchema();
   const q = async <T>(sql: string) => (await db().query(sql, [SITE, days])).rows as T[];
-  const W = `site = $1 AND day > (now() AT TIME ZONE 'Asia/Shanghai')::date - $2::int`;
+  // A view with utm_source=stats-test marks a test visit: that visitor's whole day is left out.
+  const W = `site = $1 AND day > (now() AT TIME ZONE 'Asia/Shanghai')::date - $2::int
+    AND (day, visitor) NOT IN (SELECT day, visitor FROM web_hits WHERE site = $1 AND utm_source = '${TEST_SOURCE}')`;
   const BROWSER_DL = `name = 'download' AND props->>'client' = 'browser'`;
   const [daily, funnel, refs, utms, devices, videos, joins, clicks, downloads, tries] = await Promise.all([
     q<HomeDay>(`

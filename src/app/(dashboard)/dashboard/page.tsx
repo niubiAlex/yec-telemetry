@@ -164,7 +164,7 @@ function HomeSection({ home, RL }: { home: Awaited<ReturnType<typeof loadHomeSta
       <h2>官网 yec.askheadline.com · {RL}</h2>
       <p className="note">
         官网自己记的计数（web_hits 表，site = yec_web），不经第三方。访客 = 当天 IP + 浏览器标识加盐哈希，不存 IP、不设跟踪 Cookie，每天换一次，
-        所以范围内的访客是「人·天」相加：同一个人来了 3 天算 3。爬虫、预览机器人和打开过这个看板的浏览器不计。
+        所以范围内的访客是「人·天」相加：同一个人来了 3 天算 3。爬虫、预览机器人和打开过这个看板的浏览器不计；带 utm_source=stats-test 的测试访问整天不计。
         翻译框只记次数和结果类型，不记文字。下载是服务器看到的安装包请求（从第一个字节开始的 GET，同一访客同一文件一天算一次），
         浏览器发起的才算官网下载；文件是否传完看不到。
       </p>
