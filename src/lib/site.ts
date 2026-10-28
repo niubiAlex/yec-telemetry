@@ -1,3 +1,4 @@
+import https from "node:https";
 import { getDoc } from "./db";
 import { checkManifest, docName, type Manifest } from "./remote";
 
@@ -46,15 +47,18 @@ async function manifest(platform: "mac" | "windows"): Promise<Manifest | null> {
   }
 }
 
-async function blobSize(path: string): Promise<number | null> {
-  try {
-    const res = await fetch(`${BLOB_BASE}/${path}`, { method: "HEAD", next: { revalidate: 300 } });
-    if (!res.ok) return null;
-    const n = Number(res.headers.get("content-length"));
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
+/** Node's https, not fetch: through Next's patched fetch this HEAD came back without a usable size. */
+function blobSize(path: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const req = https.request(`${BLOB_BASE}/${path}`, { method: "HEAD", timeout: 5000 }, (res) => {
+      res.resume();
+      const n = Number(res.headers["content-length"]);
+      resolve(res.statusCode === 200 && Number.isFinite(n) && n > 0 ? n : null);
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(null));
+    req.end();
+  });
 }
 
 export async function macDownload(): Promise<Download> {
