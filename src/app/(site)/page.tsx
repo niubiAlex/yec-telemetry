@@ -1,23 +1,23 @@
 import type { ReactNode } from "react";
 import { macDownload, megabytes, renamed, windowsDownload, type Download } from "@/lib/site";
-import { AUDIENCES, CONTACT, CONTACT_IS_PLACEHOLDER, FAQ, GIFT, PRODUCT, SLOGAN, TRIAL, VIDEOS } from "./content";
+import {
+  AUDIENCES, FAQ, GIFT, JOIN_CTA, PRODUCT, SLOGAN, SLOGAN_EN, SLOGAN_LEARN, SLOGAN_LEARN_EN, TRIAL, VIDEOS, WECHAT_GROUP, WECHAT_QR,
+} from "./content";
 import { TryBox, TryButton } from "./TryBox";
 
 export const runtime = "nodejs";
 export const revalidate = 300;
 
 const NAV = [
-  ["#features", "功能"],
-  ["#videos", "视频"],
+  ["#native", "像老外一样打字"],
+  ["#learn", "神奇的学习方式"],
   ["#who", "适合谁"],
   ["#join", "加入内测"],
   ["#privacy", "隐私"],
   ["#faq", "常见问题"],
 ] as const;
 
-function Contact() {
-  return <span className={CONTACT_IS_PLACEHOLDER ? "contact placeholder" : "contact"}>{CONTACT}</span>;
-}
+type Pillar = "native" | "learn";
 
 function Shot({ src, alt, caption, w, h }: { src: string; alt: string; caption?: string; w: number; h: number }) {
   return (
@@ -41,12 +41,56 @@ function Feature({ id, icon, title, children, shot, flip }: { id?: string; icon:
   );
 }
 
+function PillarHead({ n, zh, en, sub }: { n: number; zh: string; en: string; sub: string }) {
+  return (
+    <div className="pillhead">
+      <span className="pillnum">{n}</span>
+      <h2>「{zh}」</h2>
+      <p className="pillen">{en}</p>
+      <p className="sub center">{sub}</p>
+    </div>
+  );
+}
+
+function Videos({ pillar }: { pillar: Pillar }) {
+  const list = VIDEOS.filter((v) => v.pillar === pillar);
+  return (
+    <div className={list.length > 1 ? "videos" : "videos one"}>
+      {list.map((v) => (
+        <article className="vcard" id={`video-${v.id}`} key={v.id}>
+          <video controls preload="none" playsInline poster={`/home/poster-${v.id}.webp`}
+            src={`/dl/site/${v.file}`} aria-label={`${v.title}宣传片`} />
+          <div className="vbody">
+            <h3>{v.title} <small>{v.seconds} 秒</small></h3>
+            <p>{v.blurb}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function Audiences({ pillar }: { pillar: Pillar }) {
+  return AUDIENCES.filter((a) => a.pillar === pillar).map((a) => (
+    <article className={`aud aud-${a.id}`} key={a.id}>
+      <div className="tag">{a.tag}</div>
+      <h3>{a.title}</h3>
+      <p>{a.body}</p>
+      <div className="chips">{a.chips.map((e) => <span className="chip" key={e}>{e}</span>)}</div>
+      <div className="audacts">
+        <TryButton text={a.tryText} />
+        <a className="audlink" href={a.link.href}>{a.link.label} →</a>
+      </div>
+    </article>
+  ));
+}
+
 function DownloadButton({ d, label }: { d: Download | null; label: string }) {
   if (!d) {
     return (
       <a className="dl off" href="#join">
         {label}
-        <small>暂时取不到安装包，请联系我们获取</small>
+        <small>暂时取不到安装包，请扫码进群获取</small>
       </a>
     );
   }
@@ -89,37 +133,37 @@ export default async function Home() {
         <section className="hero">
           <div className="wrap herogrid">
             <div>
-              <span className="eyebrow">{SLOGAN} · 内测招募中</span>
-              <h1>打中文，<span className="accent">也能聊英文</span></h1>
-              <p className="lead">
-                回海外客户、聊跨境合作、给导师写邮件……内容想好了，英文怎么说还要再琢磨一遍？用{PRODUCT}，输入中文时就能看到对应的英文表达，选一种适合自己的说法。
-              </p>
-              <ul className="points">
-                <li>打中文直接出英文</li>
-                <li>闲聊 / 工作 / 学术三种说法</li>
-                <li>英文一键改地道</li>
-                <li>边打字边学</li>
-              </ul>
+              <span className="eyebrow">Mac / Windows · 内测招募中</span>
+              <h1>{PRODUCT}</h1>
+              <p className="lead">打中文，也能聊英文；打着打着，英语也学会了。两种用法，从哪条开始都行。</p>
+              <div className="paths">
+                <a className="path" href="#native">
+                  <span className="pathn">1</span>
+                  <b>{SLOGAN}</b>
+                  <span className="pathen">{SLOGAN_EN}</span>
+                  <span className="pathbody">要写英文的人：打中文直接出地道英文，闲聊 / 工作 / 学术三种语气，自己写的英文一键润色。</span>
+                </a>
+                <a className="path learnpath" href="#learn">
+                  <span className="pathn">2</span>
+                  <b>{SLOGAN_LEARN}</b>
+                  <span className="pathen">{SLOGAN_LEARN_EN}</span>
+                  <span className="pathbody">照常打中文、发中文：看一眼英文卡片就学到新词和说法，加入词库的词下次打字时再出现。</span>
+                </a>
+              </div>
               <div className="btns">
-                <a className="btn btn-primary" href="#join">申请内测</a>
+                <a className="btn btn-primary" href="#join">扫码进群</a>
                 <a className="btn btn-secondary" href="#download">下载 Mac / Windows 版</a>
               </div>
-              <div className="gift">
-                <span className="gifticon" aria-hidden="true">礼</span>
-                <div>
-                  <b>{GIFT}</b>
-                  <p>{TRIAL}</p>
-                </div>
-              </div>
+              <p className="perk"><span className="gifticon" aria-hidden="true">礼</span>{GIFT}</p>
             </div>
             <TryBox />
           </div>
         </section>
 
-        <section className="band" id="features">
+        <section className="band" id="native">
           <div className="wrap">
-            <h2 className="center">{SLOGAN}，从打中文开始</h2>
-            <p className="sub center">还是你熟悉的拼音输入法。停一下，英文就在候选条下方等你；不需要就继续打字。</p>
+            <PillarHead n={1} zh={SLOGAN} en={SLOGAN_EN}
+              sub="外贸、跨境、留学……内容用中文想好了，英文怎么说还要琢磨？还是你熟悉的拼音输入法，停一下，地道的英文就在候选条下方。" />
             <div className="feats">
               <Feature
                 icon="中→英"
@@ -154,11 +198,27 @@ export default async function Home() {
                 <p>单按 <kbd>Shift</kbd> 切到英文，直接打英文。停一下，「More natural」卡片给出改好的整句，<kbd>Ctrl J</kbd> 一键换上。</p>
                 <p className="en note">if you order more than 2000 pcs, we can give you 5% discount<br />→ If you order more than 2000 pcs, we can offer you a 5% discount.</p>
               </Feature>
+            </div>
+            <h3 className="center vtitle">看看真实用起来的样子</h3>
+            <Videos pillar="native" />
+          </div>
+        </section>
+
+        <section className="band soft" id="learn">
+          <div className="wrap">
+            <PillarHead n={2} zh={SLOGAN_LEARN} en={SLOGAN_LEARN_EN}
+              sub="不用另外背单词，也不用改变习惯。每天照常打中文、发中文，看一眼英文卡片，词和说法就留下来了。" />
+            <ol className="loop">
+              <li><span className="num">1</span><h3>照常打中文</h3><p>聊天、写周报、回消息，还是打中文、发中文。</p></li>
+              <li><span className="num">2</span><h3>看一眼英文卡片</h3><p>卡片给出这句话的英文，值得学的新词会标出来，点词看小词典。</p></li>
+              <li><span className="num">3</span><h3>今日新词 → 加入词库</h3><p>标出的新词自动收进「今日新词」，带例句；觉得有用，一键加入词库。</p></li>
+              <li><span className="num">4</span><h3>下次打字再遇见</h3><p>再打到相近的中文，词库里的词会出现在卡片上。边用边复习，说法慢慢就地道了。</p></li>
+            </ol>
+            <div className="feats">
               <Feature
-                id="learn"
                 flip
                 icon="学"
-                title="边打字边学：新词、句子自动收进来"
+                title="学习就藏在每天的打字里"
                 shot={
                   <div className="shots2">
                     <Shot src="/home/words.webp" alt="学习仪表盘的今日新词，带例句，可以一键加入词库" w={1200} h={736} caption="今日新词" />
@@ -166,13 +226,22 @@ export default async function Home() {
                   </div>
                 }
               >
-                <p>不用另外背单词，学习就藏在每天的打字里。</p>
                 <ul>
-                  <li><b>边打字边认词：</b>打字时先看到每个词的英文；整句出来后，查过的词和值得学的新词会标出来，点词看小词典。</li>
-                  <li><b>今日新词：</b>卡片上标出的新词自动列进学习仪表盘，带例句；一键加入词库，打字时提醒你用上。</li>
+                  <li><b>边打字边认词：</b>打字时先看到每个词的英文；整句出来后，查过的词和值得学的新词会标出来。</li>
+                  <li><b>今日新词：</b>卡片上标出的新词自动列进学习仪表盘，带例句，一键加入词库。</li>
                   <li><b>句子回顾：</b>卡片停留 4 秒以上的句子自动记下，随时回顾。只存在你的电脑上。</li>
                 </ul>
               </Feature>
+            </div>
+            <h3 className="center vtitle">看看怎么边打字边学</h3>
+            <Videos pillar="learn" />
+          </div>
+        </section>
+
+        <section className="band" id="more">
+          <div className="wrap">
+            <h2 className="center">两种用法都用得上</h2>
+            <div className="feats">
               <Feature
                 icon="拼"
                 title="个性化拼音纠错：越用越懂你的手误"
@@ -197,69 +266,53 @@ export default async function Home() {
           </div>
         </section>
 
-        <section className="band soft" id="videos">
-          <div className="wrap">
-            <h2 className="center">看看真实用起来的样子</h2>
-            <p className="sub center">两段短片，画面里的输入法操作都是真实录屏。点播放才会加载，默认不自动播放。</p>
-            <div className="videos">
-              {VIDEOS.map((v) => (
-                <article className="vcard" id={`video-${v.id}`} key={v.id}>
-                  <video className="v-wide" controls preload="none" playsInline poster={`/home/poster-${v.id}.webp`}
-                    src={`/dl/site/promo-${v.id}-16x9.mp4`} aria-label={`${v.title}宣传片`} />
-                  <video className="v-tall" controls preload="none" playsInline poster={`/home/poster-${v.id}-v.webp`}
-                    src={`/dl/site/promo-${v.id}-9x16.mp4`} aria-label={`${v.title}宣传片（竖版）`} />
-                  <div className="vbody">
-                    <h3>{v.title} <small>{v.seconds} 秒</small></h3>
-                    <p>{v.blurb}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="band" id="who">
+        <section className="band soft" id="who">
           <div className="wrap">
             <h2 className="center">谁适合来试试</h2>
             <p className="sub center">平时用中文想、要用英文发出去的人，或者想在日常里把英语用起来的人。下面三类朋友，我们尤其想听听你的感受。</p>
-            <div className="auds">
-              {AUDIENCES.map((a) => (
-                <article className="aud" key={a.id}>
-                  <div className="tag">{a.tag}</div>
-                  <h3>{a.title}</h3>
-                  <p>{a.body}</p>
-                  <div className="chips">{a.chips.map((e) => <span className="chip" key={e}>{e}</span>)}</div>
-                  <div className="audacts">
-                    <TryButton text={a.tryText} />
-                    <a className="audlink" href={a.link.href}>{a.link.label} →</a>
-                  </div>
-                </article>
-              ))}
+            <div className="whogrid">
+              <div className="whocol">
+                <p className="whohead"><span className="pillnum sm">1</span>{SLOGAN}</p>
+                <div className="auds two"><Audiences pillar="native" /></div>
+              </div>
+              <div className="whocol">
+                <p className="whohead"><span className="pillnum sm">2</span>{SLOGAN_LEARN}</p>
+                <div className="auds"><Audiences pillar="learn" /></div>
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="band soft" id="join">
+        <section className="band" id="join">
           <div className="wrap">
             <h2 className="center">加入内测</h2>
-            <p className="sub center">{GIFT}。{TRIAL}</p>
-            <ol className="steps">
-              <li>
-                <span className="num">1</span>
-                <h3>私信报名</h3>
-                <p>欢迎私信 <Contact />，说下电脑系统和常用场景（或主要用途）。</p>
-              </li>
-              <li>
-                <span className="num">2</span>
-                <h3>确认适配，安装</h3>
-                <p>确认适配后发安装包，也可以直接在下方下载最新版。装好后跟着新手引导试一遍。</p>
-              </li>
-              <li>
-                <span className="num">3</span>
-                <h3>用 7 天，随时反馈</h3>
-                <p>按平时需要用就好，不用每天打卡。哪里翻得不合适、语气拿捏不准，在微信群里直接说。</p>
-              </li>
-            </ol>
+            <p className="sub center">{TRIAL}</p>
+            <div className="joingrid">
+              <div className="qrcard">
+                <img src={WECHAT_QR} alt={`企业微信群「${WECHAT_GROUP}」的二维码`} width={600} height={600} />
+                <b className="qrcta">{JOIN_CTA}</b>
+                <span className="qrgroup">{WECHAT_GROUP}</span>
+                <span className="qrhint qrhint-touch">在微信里长按二维码，识别后进群</span>
+                <span className="qrhint qrhint-desk">用微信或企业微信扫一扫</span>
+              </div>
+              <ol className="steps joinsteps">
+                <li>
+                  <span className="num">1</span>
+                  <h3>扫码进群</h3>
+                  <p>{JOIN_CTA}。顺便说下电脑系统和常用场景（或主要用途）。</p>
+                </li>
+                <li>
+                  <span className="num">2</span>
+                  <h3>下载安装</h3>
+                  <p>在下方下载最新版，装好后跟着新手引导试一遍。</p>
+                </li>
+                <li>
+                  <span className="num">3</span>
+                  <h3>用 7 天，随时反馈</h3>
+                  <p>按平时需要用就好，不用每天打卡。哪里翻得不合适、语气拿捏不准，在群里直接说。</p>
+                </li>
+              </ol>
+            </div>
             <p className="note center" style={{ marginTop: 24 }}>也欢迎转给身边有需要的朋友，谢谢大家帮忙！</p>
           </div>
         </section>
@@ -275,7 +328,7 @@ export default async function Home() {
             </div>
             <div className="reqs">
               <p>Mac：macOS 26 及以上，Apple 芯片（M 系列）。Windows：Windows 10 / 11，64 位。</p>
-              <p>报名内测请先私信 <Contact />，方便拉你进微信群、发放有道词典 SVIP。</p>
+              <p>别忘了<a href="#join">扫码进群</a>，领取内测专属福利、随时反馈。</p>
             </div>
           </div>
         </section>
@@ -342,7 +395,7 @@ export default async function Home() {
         <div className="footin">
           <div>
             <a className="brand" href="/"><span className="logo" aria-hidden="true">有</span>{PRODUCT}</a>
-            <p style={{ maxWidth: 480 }}>{SLOGAN}。打中文，也能聊英文。内测版，欢迎反馈。</p>
+            <p style={{ maxWidth: 480 }}>{SLOGAN} · {SLOGAN_EN}<br />{SLOGAN_LEARN} · {SLOGAN_LEARN_EN}<br />内测版，欢迎扫码进群反馈。</p>
           </div>
           <nav aria-label="页脚导航">
             <h2>页面</h2>

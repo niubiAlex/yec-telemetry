@@ -6,8 +6,8 @@ import "./site.css";
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "有道 AI 输入法 · 像老外一样打字 · 内测招募",
-  description: "打中文，也能聊英文。输入中文时就能看到地道的英文表达，闲聊、工作、学术三种说法任选。Mac 和 Windows 内测招募中，参与内测赠送有道词典 SVIP。",
+  title: "有道 AI 输入法 · 像老外一样打字 · 一种神奇的学习方式",
+  description: "像老外一样打字：打中文直接出地道英文，闲聊、工作、学术三种说法任选。一种神奇的学习方式：照常打中文，看一眼英文卡片就学到新词。Mac 和 Windows 内测招募中，扫码进群领取内测专属福利。",
   robots: { index: false, follow: false },
   icons: { icon: "/home/icon.svg" },
 };
