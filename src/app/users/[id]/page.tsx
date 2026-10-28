@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { isDeviceId, userCode, userDetail, type DayRow } from "@/lib/users";
+import { isDeviceId, TYPING_FILTERS, TYPING_PAGE, typingLog, userCode, userDetail, type DayRow, type TypingFilter,
+  type TypingPage } from "@/lib/users";
 import { How } from "../../How";
 import { ADOPT_HOW, DISRUPT_HOW, POLISH_ADOPT_HOW } from "../../explain";
 import { PRODUCTS } from "@/lib/product";
@@ -16,17 +17,37 @@ const APP: Record<string, string> = { chat: "聊天", mail: "邮件", doc: "文�
 const SAMPLE: Record<string, string> = { zh_en: "中译英", es_en: "西 → 英", en_es: "英 → 西", polish: "润色", survey: "第 7 天问卷" };
 const LEVEL: Record<string, string> = { unset: "未设置" };
 const yesNo = (v: boolean | null | undefined, yes = "是", no = "否") => (v == null ? "–" : v ? yes : no);
+const SEEN: Record<string, string> = { adopted: "已采纳", seen: "看了没用", unseen: "没看" };
+const FILTER: Record<TypingFilter, string> = { all: "全部", adopted: "已采纳", seen: "看了没用", unseen: "没看" };
+const VIA: Record<string, string> = { zh: "选字上屏", en: "直接打的英文", other: "联想或原样上屏", card: "卡片替换进去的" };
+const CARD_KIND: Record<string, string> = { translate: "翻译卡片", polish: "润色建议" };
+const TONE: Record<string, string> = { chat: "聊天", work: "工作", academic: "学术" };
+const OUTCOME: Record<string, string> = {
+  replaced: "替换了", accepted: "采纳了", edited: "替换后又改了", undone: "替换后撤销", dismissed: "按 Esc 关掉",
+  closed: "点 X 关掉", turned_off: "关掉了功能", glanced: "看了，没用", none: "显示不到 1.5 秒就没了", unshown: "生成了但没显示",
+};
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const beijingDay = (offsetDays = 0) => new Date(Date.now() + 8 * 3_600_000 - offsetDays * 86_400_000).toISOString().slice(0, 10);
 
 export default async function UserDetail({ params, searchParams }: {
-  params: { id: string }; searchParams: { range?: string; day?: string };
+  params: { id: string };
+  searchParams: { range?: string; day?: string; tl?: string; tl_from?: string; tl_to?: string; tl_page?: string };
 }) {
   if (!isDeviceId(params.id)) notFound();
   const id = params.id.toLowerCase();
   const range = RANGES.find((r) => String(r) === searchParams.range) ?? 30;
   const eventDay = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.day ?? "") ? (searchParams.day as string) : null;
+  const tl = {
+    filter: TYPING_FILTERS.find((f) => f === searchParams.tl) ?? "all",
+    from: DAY_RE.test(searchParams.tl_from ?? "") ? (searchParams.tl_from as string) : beijingDay(6),
+    to: DAY_RE.test(searchParams.tl_to ?? "") ? (searchParams.tl_to as string) : beijingDay(0),
+    page: Math.max(1, Math.min(10_000, Number.parseInt(searchParams.tl_page ?? "1", 10) || 1)),
+  };
   let d: Awaited<ReturnType<typeof userDetail>>;
+  let typing: TypingPage;
   try {
     d = await userDetail(id, range, eventDay);
+    typing = await typingLog(id, tl.filter, tl.from, tl.to, tl.page);
   } catch (err) {
     console.error(err);
     return <main><h1>读取失败</h1><p className="sub">数据库不可用，检查 DATABASE_URL。</p></main>;
@@ -42,6 +63,21 @@ export default async function UserDetail({ params, searchParams }: {
     const s = qs.toString();
     return `/users/${id}${s ? `?${s}` : ""}`;
   };
+  const tlHref = (o: { filter?: TypingFilter; page?: number }) => {
+    const qs = new URLSearchParams();
+    if (range !== 30) qs.set("range", String(range));
+    if (eventDay) qs.set("day", eventDay);
+    const f = o.filter ?? tl.filter;
+    if (f !== "all") qs.set("tl", f);
+    qs.set("tl_from", tl.from);
+    qs.set("tl_to", tl.to);
+    const pg = o.page ?? (o.filter ? 1 : tl.page);
+    if (pg > 1) qs.set("tl_page", String(pg));
+    return `/users/${id}?${qs.toString()}#typing`;
+  };
+  const tlCount = (f: TypingFilter) => (f === "all"
+    ? typing.counts.commits + typing.counts.adopted + typing.counts.seen + typing.counts.unseen : typing.counts[f]);
+  const pages = Math.max(1, Math.ceil(typing.total / TYPING_PAGE));
   const sum = (f: (r: DayRow) => number) => d!.days.reduce((a, r) => a + f(r), 0);
   const tot = {
     shown: sum((r) => r.shown), glanced: sum((r) => r.glanced), adopted: sum((r) => r.adopted),
@@ -56,7 +92,8 @@ export default async function UserDetail({ params, searchParams }: {
         <a href={p.product === "zh" ? "/users" : `/users?product=${p.product}`}>用户 · {PRODUCTS[p.product]}</a>
       </p>
       <h1><span className="code">{userCode(id)}</span> {p.name && <span>{p.name}</span>}</h1>
-      <p className="sub">{PRODUCTS[p.product]}，设备 ID {id}。只有计数、枚举和应用标识，没有用户打的字；「帮助改进」样本只显示条数。</p>
+      <p className="sub">{PRODUCTS[p.product]}，设备 ID {id}。统计部分只有计数、枚举和应用标识；「帮助改进」样本只显示条数。
+        用户在客户端点了「同意」之后，打的字和卡片内容在下面的「打字明细」里。</p>
       <NameForm deviceId={id} name={p.name} back={self()} />
 
       <div className="kpis">
@@ -72,7 +109,8 @@ export default async function UserDetail({ params, searchParams }: {
         <div className="kpi"><b>{pct(tot.p_accepted, tot.p_shown)}</b><span>润色采纳率（近 {range} 天）</span>
           <How right>{POLISH_ADOPT_HOW}</How><small>{tot.p_accepted} / {tot.p_shown}</small></div>
         <div className="kpi"><b>{LEVEL[p.english_level ?? ""] ?? p.english_level ?? "–"}</b><span>英语水平</span>
-          <small>引导完成 {yesNo(p.onboarded)} · 帮助改进 {yesNo(p.improve_on, "开", "关")}</small></div>
+          <small>引导完成 {yesNo(p.onboarded)} · 帮助改进 {yesNo(p.improve_on, "开", "关")}
+            · 上传打字 {yesNo(p.typing_log_on, "已同意", "未同意")}</small></div>
       </div>
 
       <h3>留存状态（相对安装日）</h3>
@@ -157,6 +195,59 @@ export default async function UserDetail({ params, searchParams }: {
             </table>
           )}</section>
       </div>
+
+      <section id="typing">
+        <h3>打字明细</h3>
+        <p className="note">
+          只有点了「同意」的 Beta 用户才有：上屏的文字，和每张翻译卡片、润色建议的原句、结果、语气和去向。不含应用名、窗口标题或网址；
+          密码框、6 位以上连续数字、邮箱和网址在客户端和这里各过滤一次。保存 90 天，用户可在设置里删除。时间为北京时间，最新在前。
+        </p>
+        <form className="filters" method="get" action={`/users/${id}#typing`}>
+          {range !== 30 && <input type="hidden" name="range" value={range} />}
+          {eventDay && <input type="hidden" name="day" value={eventDay} />}
+          {tl.filter !== "all" && <input type="hidden" name="tl" value={tl.filter} />}
+          <label>从 <input type="date" name="tl_from" defaultValue={tl.from} /></label>
+          <label>到 <input type="date" name="tl_to" defaultValue={tl.to} /></label>
+          <button type="submit">查看</button>
+        </form>
+        <nav className="filters" aria-label="卡片去向">
+          <span>卡片去向：</span>
+          {TYPING_FILTERS.map((f) => (
+            <a key={f} href={tlHref({ filter: f })} aria-current={tl.filter === f}>
+              {FILTER[f]} {tlCount(f)}{f === "all" ? <small> （打字 {typing.counts.commits}）</small> : null}
+            </a>
+          ))}
+        </nav>
+        {typing.rows.length === 0 ? <p className="empty">这段时间没有记录{p.typing_log_on ? "" : "（这台设备没有同意上传打字内容）"}</p> : (
+          <table className="typing">
+            <thead><tr><th scope="col">时间</th><th scope="col">类型</th><th scope="col">应用类别</th><th scope="col">内容</th>
+              <th scope="col">去向</th></tr></thead>
+            <tbody>{typing.rows.map((r) => r.type === "commit" ? (
+              <tr key={r.id}><td>{r.time}</td><td>打字<small> · {VIA[r.via ?? ""] ?? r.via}</small></td>
+                <td>{APP[r.app_category ?? ""] ?? <span className="muted">–</span>}</td>
+                <td className="txt">{r.text}</td><td /></tr>
+            ) : (
+              <tr key={r.id} className="card"><td>{r.time}</td>
+                <td>{CARD_KIND[r.kind ?? ""] ?? r.kind}{r.lang_pair && r.lang_pair !== "zh_en" && r.lang_pair !== "en_en"
+                  ? <small> · {r.lang_pair}</small> : null}{r.tone ? <small> · {TONE[r.tone] ?? r.tone}</small> : null}</td>
+                <td>{APP[r.app_category ?? ""] ?? <span className="muted">–</span>}</td>
+                <td className="txt">{r.source}<span className="out">{r.output}</span></td>
+                <td><span className={`sb sb-${r.seen}`}>{SEEN[r.seen ?? ""]}</span><small> {OUTCOME[r.outcome ?? ""] ?? r.outcome}</small></td></tr>
+            ))}</tbody>
+          </table>
+        )}
+        {pages > 1 && (
+          <p className="pager">
+            {tl.page > 1 ? <a href={tlHref({ page: tl.page - 1 })}>← 上一页</a> : <span className="muted">← 上一页</span>}
+            <span>第 {tl.page} / {pages} 页，共 {typing.total} 条</span>
+            {tl.page < pages ? <a href={tlHref({ page: tl.page + 1 })}>下一页 →</a> : <span className="muted">下一页 →</span>}
+          </p>
+        )}
+        <p className="note">
+          已采纳 = 替换或采纳了（含之后又改了几个字）；看了没用 = 在屏幕上停够 1.5 秒、按了 Esc、点了 X 或采纳后撤销；
+          没看 = 生成了但没显示（用户已经接着打字），或显示不到 1.5 秒就没了。
+        </p>
+      </section>
 
       {eventDay && (
         <section id="events">

@@ -121,6 +121,17 @@ table.events td:last-child { text-align: left; white-space: normal; font-size: 1
 .nameform button, form.filters input { font: inherit; font-size: 13px; }
 .hint { display: block; color: var(--muted); font-size: 11px; }
 .tm .hint { grid-column: 1 / -1; }
+table.typing th, table.typing td { text-align: left; vertical-align: top; }
+table.typing td.txt { white-space: normal; word-break: break-word; width: 100%; }
+table.typing td.txt .out { display: block; margin-top: 2px; }
+table.typing td.txt .out::before { content: "→ "; color: var(--muted); }
+table.typing tr.card td { background: var(--card); }
+.sb { display: inline-block; font-size: 11px; border-radius: 10px; padding: 0 7px; border: 1px solid var(--line); white-space: nowrap; }
+.sb-adopted { color: #1a7f37; border-color: #1a7f37; }
+.sb-seen { color: #9a6700; border-color: #9a6700; }
+.sb-unseen { color: var(--muted); }
+.pager { display: flex; gap: 12px; align-items: center; font-size: 13px; margin: 8px 0; }
+.pager a { color: var(--bar); text-decoration: none; }
 
 .curve text { font-size: 10px; fill: var(--muted); }
 .curve .grid { stroke: var(--line); }

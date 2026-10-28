@@ -150,6 +150,8 @@ const EVENT_PROP: Record<string, Record<string, Check>> = {
   user_word_added: { entry: oneOf("candidate", "settings") },
   improve_notice_shown: { entry: oneOf("onboarding", "first_run", "polish_launch") },
   improve_optin_changed: { entry: oneOf("notice", "settings") },
+  typing_log_notice_shown: { entry: oneOf("launch", "onboarding") },
+  typing_log_consent_changed: { entry: oneOf("notice", "settings") },
   ime_restarted: { kind: oneOf("crash", "hang_killed", "system") },
   word_first_highlighted: { kind: oneOf("gloss", "new_word") },
   word_typed_back: { kind: oneOf("gloss", "new_word") },
@@ -247,6 +249,10 @@ export const ALLOWLIST: Record<string, readonly string[]> = {
   improve_notice_shown: ["entry", "notice_version"],
   improve_optin_changed: ["on", "entry"],
   improve_samples_deleted: [],
+  // 打字明细 consent (lib/typing.ts): the notice, 同意 / 不同意 or the Settings switch, 删除我的打字记录.
+  typing_log_notice_shown: ["entry", "notice_version"],
+  typing_log_consent_changed: ["on", "entry", "notice_version"],
+  typing_log_deleted: ["notice_version"],
   // Spanish Keyboard (product "es"): the direction picked in the menu, by shortcut or in Settings.
   mode_switched: ["from_mode", "to_mode", "via"],
 };
@@ -271,6 +277,8 @@ export interface BatchMeta {
   onboarded: boolean | null;
   installDate: string | null;
   improveOn: boolean | null;
+  /** The 打字明细 consent: true only after 同意. */
+  typingLogOn: boolean | null;
   /** lib/product.ts: "zh" when missing (every client before the Spanish package). */
   product: string;
 }
@@ -302,6 +310,7 @@ function parseMeta(body: Record<string, unknown>): BatchMeta {
     onboarded: pick<boolean>(body.onboarded, bool),
     installDate: pick<string>(body.install_date, isDay),
     improveOn: pick<boolean>(body.improve_on, bool),
+    typingLogOn: pick<boolean>(body.typing_log_on, bool),
     product: storedProduct(body.product),
   };
 }

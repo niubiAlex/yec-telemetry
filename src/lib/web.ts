@@ -54,7 +54,7 @@ export function parseWebBatch(body: unknown, batchId: string, now = Date.now()):
     batch: {
       batchId, deviceId: visitor_id.toLowerCase(), appVersion: "web", osVersion: "web",
       meta: { platform: null, channel: null, englishLevel: null, onboarded: null, installDate: null, improveOn: null,
-        product: WEB_PRODUCT },
+        typingLogOn: null, product: WEB_PRODUCT },
       events: clean, dropped,
     },
   };

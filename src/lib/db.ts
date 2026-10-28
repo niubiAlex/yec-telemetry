@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import type { Batch } from "./schema";
 import { RETENTION_DAYS, type SampleBatch } from "./samples";
+import { TYPING_RETENTION_DAYS, type TypingBatch } from "./typing";
 
 // One pool per server instance. On Vercel use Neon's pooled URL.
 let pool: Pool | undefined;
@@ -89,6 +90,35 @@ CREATE TABLE IF NOT EXISTS remote_docs (
   body        jsonb NOT NULL,
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
+-- 打字明细 (lib/typing.ts): typed text and cards, only from devices that tapped 同意.
+-- rid = the client's id for a commit record, the card_id for a card (a resend updates its outcome).
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS typing_log_on boolean;
+CREATE TABLE IF NOT EXISTS typing_log (
+  id             bigserial PRIMARY KEY,
+  device_id      uuid NOT NULL,
+  rid            uuid NOT NULL,
+  type           text NOT NULL,
+  ts             timestamptz NOT NULL,
+  received_at    timestamptz NOT NULL DEFAULT now(),
+  app_version    text NOT NULL,
+  os_version     text NOT NULL,
+  platform       text,
+  product        text NOT NULL DEFAULT 'zh',
+  notice_version int NOT NULL,
+  app_category   text,
+  text           text,
+  via            text,
+  card_id        uuid,
+  kind           text,
+  lang_pair      text,
+  source         text,
+  output         text,
+  tone           text,
+  outcome        text,
+  UNIQUE (device_id, rid)
+);
+CREATE INDEX IF NOT EXISTS typing_log_device_ts ON typing_log (device_id, ts);
+CREATE INDEX IF NOT EXISTS typing_log_received ON typing_log (received_at);
 `;
 
 let ready: Promise<void> | undefined;
@@ -127,10 +157,10 @@ export async function storeBatch(b: Batch): Promise<{ duplicate: boolean }> {
     await client.query("BEGIN");
     const inserted = await client.query(
       `INSERT INTO batches (batch_id, device_id, app_version, os_version,
-         platform, channel, english_level, onboarded, install_date, improve_on, product)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (batch_id) DO NOTHING`,
+         platform, channel, english_level, onboarded, install_date, improve_on, product, typing_log_on)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (batch_id) DO NOTHING`,
       [b.batchId, b.deviceId, b.appVersion, b.osVersion, b.meta.platform, b.meta.channel,
-        b.meta.englishLevel, b.meta.onboarded, b.meta.installDate, b.meta.improveOn, b.meta.product],
+        b.meta.englishLevel, b.meta.onboarded, b.meta.installDate, b.meta.improveOn, b.meta.product, b.meta.typingLogOn],
     );
     if (inserted.rowCount === 0) {
       await client.query("ROLLBACK");
@@ -199,5 +229,45 @@ export async function deleteDeviceSamples(deviceId: string): Promise<number> {
 export async function purgeSamples(): Promise<number> {
   await ensureSchema();
   const r = await db().query(`DELETE FROM samples WHERE received_at < now() - interval '${RETENTION_DAYS} days'`);
+  return r.rowCount ?? 0;
+}
+
+/** Stores 打字明细 records; a resent commit is ignored, a resent card updates its outcome. */
+export async function storeTyping(b: TypingBatch): Promise<number> {
+  await ensureSchema();
+  if (b.records.length === 0) return 0;
+  const col = <T>(f: (r: TypingBatch["records"][number]) => T) => b.records.map(f);
+  const r = await db().query(
+    `INSERT INTO typing_log (device_id, app_version, os_version, platform, product, notice_version,
+       rid, type, ts, app_category, text, via, card_id, kind, lang_pair, source, output, tone, outcome)
+     SELECT $1, $2, $3, $4, $5, $6, t.rid, t.type, to_timestamp(t.ts / 1000.0), t.app_category, t.text, t.via,
+       t.card_id, t.kind, t.lang_pair, t.source, t.output, t.tone, t.outcome
+     FROM unnest($7::uuid[], $8::text[], $9::float8[], $10::text[], $11::text[], $12::text[], $13::uuid[], $14::text[],
+       $15::text[], $16::text[], $17::text[], $18::text[], $19::text[])
+       AS t(rid, type, ts, app_category, text, via, card_id, kind, lang_pair, source, output, tone, outcome)
+     ON CONFLICT (device_id, rid) DO UPDATE SET outcome = EXCLUDED.outcome, output = EXCLUDED.output, tone = EXCLUDED.tone,
+       received_at = now()
+       WHERE typing_log.type = 'card' AND EXCLUDED.type = 'card'`,
+    [b.deviceId, b.appVersion, b.osVersion, b.platform, b.product, b.noticeVersion,
+      col((x) => x.rid), col((x) => x.type), col((x) => x.ts), col((x) => x.appCategory),
+      col((x) => (x.type === "commit" ? x.text : null)), col((x) => (x.type === "commit" ? x.via : null)),
+      col((x) => (x.type === "card" ? x.cardId : null)), col((x) => (x.type === "card" ? x.kind : null)),
+      col((x) => (x.type === "card" ? x.langPair : null)), col((x) => (x.type === "card" ? x.source : null)),
+      col((x) => (x.type === "card" ? x.output : null)), col((x) => (x.type === "card" ? x.tone : null)),
+      col((x) => (x.type === "card" ? x.outcome : null))],
+  );
+  return r.rowCount ?? 0;
+}
+
+/** 删除我的打字记录: every record from this device. */
+export async function deleteDeviceTyping(deviceId: string): Promise<number> {
+  await ensureSchema();
+  return (await db().query("DELETE FROM typing_log WHERE device_id = $1", [deviceId])).rowCount ?? 0;
+}
+
+/** Deletes 打字明细 received more than TYPING_RETENTION_DAYS ago. */
+export async function purgeTyping(): Promise<number> {
+  await ensureSchema();
+  const r = await db().query(`DELETE FROM typing_log WHERE received_at < now() - interval '${TYPING_RETENTION_DAYS} days'`);
   return r.rowCount ?? 0;
 }

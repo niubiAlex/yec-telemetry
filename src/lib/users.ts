@@ -1,5 +1,6 @@
 import { db, ensureSchema } from "./db";
 import { isProduct, scoped, type Product } from "./product";
+import { SEEN_SQL } from "./typing";
 
 // The 用户 pages: one row per device, keyed by the anonymous device_id (a
 // random UUID the client generates). Definitions follow lib/stats.ts.
@@ -152,7 +153,7 @@ export interface AppRow {
 
 export interface Detail {
   profile: UserRow & { product: Product; os_version: string | null; english_level: string | null; improve_on: boolean | null;
-    onboarded: boolean | null; first_active: string | null };
+    typing_log_on: boolean | null; onboarded: boolean | null; first_active: string | null };
   days: DayRow[];
   apps: AppRow[];
   retention: { k: number; lo: number; hi: number; due: string; done: boolean; active: boolean; main: boolean }[];
@@ -173,11 +174,12 @@ export async function userDetail(deviceId: string, range: number, eventDay: stri
   if (!profile) return null;
   profile.product = product;
   const [extra] = await q<{ os_version: string | null; english_level: string | null; improve_on: boolean | null;
-    onboarded: boolean | null; first_active: string | null }>(`
+    typing_log_on: boolean | null; onboarded: boolean | null; first_active: string | null }>(`
     WITH ${BASE}
     SELECT (SELECT os_version FROM latest) AS os_version,
       (SELECT english_level FROM bt WHERE english_level IS NOT NULL ORDER BY received_at DESC LIMIT 1) AS english_level,
       (SELECT improve_on FROM bt WHERE improve_on IS NOT NULL ORDER BY received_at DESC LIMIT 1) AS improve_on,
+      (SELECT typing_log_on FROM bt WHERE typing_log_on IS NOT NULL ORDER BY received_at DESC LIMIT 1) AS typing_log_on,
       (SELECT onboarded FROM bt WHERE onboarded IS NOT NULL ORDER BY received_at DESC LIMIT 1) AS onboarded,
       (SELECT to_char(min(day), 'YYYY-MM-DD') FROM ad) AS first_active`, [deviceId]);
   Object.assign(profile, extra);
@@ -322,4 +324,46 @@ export async function userDetail(deviceId: string, range: number, eventDay: stri
     FROM events WHERE device_id = $1::uuid AND ${DAY} = $2::date ORDER BY ts, id LIMIT 1000`, [deviceId, eventDay]) : [];
 
   return { profile, days, apps, retention, samples, events };
+}
+
+export const TYPING_FILTERS = ["all", "adopted", "seen", "unseen"] as const;
+export type TypingFilter = (typeof TYPING_FILTERS)[number];
+export const TYPING_PAGE = 50;
+
+export interface TypingRow {
+  id: string; time: string; type: "commit" | "card"; app_category: string | null; text: string | null; via: string | null;
+  kind: string | null; lang_pair: string | null; source: string | null; output: string | null; tone: string | null;
+  outcome: string | null; seen: string | null;
+}
+
+export interface TypingPage {
+  rows: TypingRow[];
+  /** Rows matching the filter in the date range, for the pager. */
+  total: number;
+  counts: { commits: number; adopted: number; seen: number; unseen: number };
+}
+
+/**
+ * 打字明细 for one device, newest first: typed text and cards between `from`
+ * and `to` (Beijing days, inclusive). A filter other than `all` lists cards only.
+ */
+export async function typingLog(deviceId: string, filter: TypingFilter, from: string, to: string, page: number): Promise<TypingPage> {
+  await ensureSchema();
+  const where = `device_id = $1::uuid AND ${DAY} BETWEEN $2::date AND $3::date`;
+  const seen = SEEN_SQL;
+  const [c] = (await db().query(`
+    SELECT count(*) FILTER (WHERE type = 'commit')::int AS commits,
+      count(*) FILTER (WHERE type = 'card' AND ${seen} = 'adopted')::int AS adopted,
+      count(*) FILTER (WHERE type = 'card' AND ${seen} = 'seen')::int AS seen,
+      count(*) FILTER (WHERE type = 'card' AND ${seen} = 'unseen')::int AS unseen
+    FROM typing_log WHERE ${where}`, [deviceId, from, to])).rows as TypingPage["counts"][];
+  const counts = c ?? { commits: 0, adopted: 0, seen: 0, unseen: 0 };
+  const total = filter === "all" ? counts.commits + counts.adopted + counts.seen + counts.unseen : counts[filter];
+  const rows = (await db().query(`
+    SELECT id::text, to_char(ts AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI:SS') AS time, type, app_category, text, via,
+      kind, lang_pair, source, output, tone, outcome, CASE WHEN type = 'card' THEN ${seen} END AS seen
+    FROM typing_log WHERE ${where} AND ($4::text = 'all' OR (type = 'card' AND ${seen} = $4::text))
+    ORDER BY ts DESC, id DESC LIMIT ${TYPING_PAGE} OFFSET $5`,
+  [deviceId, from, to, filter, (Math.max(1, page) - 1) * TYPING_PAGE])).rows as TypingRow[];
+  return { rows, total, counts };
 }
