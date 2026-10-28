@@ -88,7 +88,7 @@ export default async function UserDetail({ params, searchParams }: {
   return (
     <main>
       <p className="crumbs">
-        <a href={p.product === "zh" ? "/" : `/?product=${p.product}`}>← 总览</a> ·{" "}
+        <a href={p.product === "zh" ? "/dashboard" : `/dashboard?product=${p.product}`}>← 总览</a> ·{" "}
         <a href={p.product === "zh" ? "/users" : `/users?product=${p.product}`}>用户 · {PRODUCTS[p.product]}</a>
       </p>
       <h1><span className="code">{userCode(id)}</span> {p.name && <span>{p.name}</span>}</h1>

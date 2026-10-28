@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { RANGES, loadStats, type Cohort, type Count, type Platform, type Presence, type Rate } from "@/lib/stats";
 import { PRODUCTS, productParam, type Product } from "@/lib/product";
-import { How } from "./How";
-import { ADOPT_HINT, ADOPT_HOW, DISRUPT_HINT, DISRUPT_HOW, POLISH_ADOPT_HINT, POLISH_ADOPT_HOW, WEEKLY_OFF_HOW } from "./explain";
-import { DaySelect } from "./DaySelect";
+import { How } from "../How";
+import { ADOPT_HINT, ADOPT_HOW, DISRUPT_HINT, DISRUPT_HOW, POLISH_ADOPT_HINT, POLISH_ADOPT_HOW, WEEKLY_OFF_HOW } from "../explain";
+import { DaySelect } from "../DaySelect";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -167,7 +167,7 @@ export default async function Page({ searchParams }: {
     if (d) qs.set("day", d);
     if (rcv === "active") qs.set("rc", "active");
     const str = qs.toString();
-    return (str ? `/?${str}` : "/") + anchor;
+    return (str ? `/dashboard?${str}` : "/dashboard") + anchor;
   };
 
   const daily = has("input_time_daily", "commits");
@@ -637,7 +637,7 @@ export default async function Page({ searchParams }: {
           )}
         </section>
       )}
-      <form className="filters" method="get" action="/" aria-label="选择日期：总览每格显示这一天">
+      <form className="filters" method="get" action="/dashboard" aria-label="选择日期：总览每格显示这一天">
         {product !== "zh" && <input type="hidden" name="product" value={product} />}
         {range !== 7 && <input type="hidden" name="range" value={range} />}
         {platform && <input type="hidden" name="platform" value={platform} />}

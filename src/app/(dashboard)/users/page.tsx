@@ -28,7 +28,7 @@ export default async function Users({ searchParams }: { searchParams: { q?: stri
   const back = href(product);
   return (
     <main>
-      <p className="crumbs"><a href={product === "zh" ? "/" : `/?product=${product}`}>← 总览</a></p>
+      <p className="crumbs"><a href={product === "zh" ? "/dashboard" : `/dashboard?product=${product}`}>← 总览</a></p>
       <h1>用户 · {PRODUCTS[product]}</h1>
       <p className="sub">
         内测设备一台一行，按最后上报时间排序。只有计数和枚举，没有用户打的字。备注名只存在看板这边，用来认人（比如「张三」），客户端看不到。
