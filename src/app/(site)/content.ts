@@ -94,7 +94,7 @@ export const FAQ: { q: string; a: string }[] = [
   },
   {
     q: "支持哪些电脑？",
-    a: "Mac：macOS 26 及以上、Apple 芯片（M 系列）。Windows：Windows 10 / 11 64 位。两边的功能和快捷键一致。",
+    a: "Mac：macOS 13 Ventura 及以上，Apple 芯片（M 系列）和 Intel 芯片都支持。Windows：Windows 10 1607 及以上或 Windows 11，64 位。两边的功能和快捷键一致。",
   },
   { q: "需要联网吗？", a: "打中文不需要联网，在你的电脑上完成。英文卡片和英文润色要用 AI 模型生成，需要联网。" },
   {

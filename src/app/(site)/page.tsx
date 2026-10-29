@@ -259,8 +259,8 @@ export default async function Home() {
               >
                 <p>两边功能和快捷键一致，换电脑也不用重新适应。装好后有新手引导，一步步带你试一遍。</p>
                 <div className="platforms">
-                  <div className="platform"><b>Mac</b><span>macOS 26 及以上 · Apple 芯片</span></div>
-                  <div className="platform"><b>Windows</b><span>Windows 10 / 11 · 64 位</span></div>
+                  <div className="platform"><b>Mac</b><span>macOS 13 及以上 · Apple 芯片和 Intel</span></div>
+                  <div className="platform"><b>Windows</b><span>Windows 10 1607 及以上 / 11 · 64 位</span></div>
                 </div>
               </Feature>
             </div>
@@ -328,7 +328,7 @@ export default async function Home() {
               <DownloadButton d={win} label="下载 Windows 版" platform="windows" />
             </div>
             <div className="reqs">
-              <p>Mac：macOS 26 及以上，Apple 芯片（M 系列）。Windows：Windows 10 / 11，64 位。</p>
+              <p>Mac：macOS 13 Ventura 及以上，Apple 芯片（M 系列）和 Intel 芯片都支持。Windows：Windows 10 1607 及以上或 Windows 11，64 位。</p>
               <p>别忘了<a href="#join" data-track="join_click" data-from="download">扫码进群</a>，领取内测专属福利、随时反馈。</p>
             </div>
           </div>
