@@ -1,5 +1,5 @@
 import { db, ensureSchema } from "./db";
-import { SITE, beijingDay, device, hitSecret, visitorId, type Hit } from "./hits";
+import { EN_SITE, SITE, beijingDay, device, hitSecret, visitorId, type Hit, type Site } from "./hits";
 
 export const TEST_SOURCE = "stats-test";
 
@@ -10,7 +10,7 @@ export const clientIp = (req: { headers: Headers; ip?: string }) =>
   (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || req.ip || "unknown";
 
 /** Stores one hit. Downloads are counted once per visitor, file and day. Never throws. */
-export async function recordHit(hit: Hit, ip: string, ua: string): Promise<void> {
+export async function recordHit(hit: Hit, ip: string, ua: string, site: Site = SITE): Promise<void> {
   const secret = hitSecret();
   if (!secret) return;
   try {
@@ -24,7 +24,7 @@ export async function recordHit(hit: Hit, ip: string, ua: string): Promise<void>
        WHERE (SELECT count(*) FROM web_hits WHERE day = $2::date AND visitor = $3) < ${DAILY_CAP}
          AND ($4 <> 'download' OR NOT EXISTS (SELECT 1 FROM web_hits
            WHERE day = $2::date AND visitor = $3 AND name = 'download' AND props->>'path' = $10::jsonb->>'path'))`,
-      [SITE, day, visitor, hit.name, device(ua), ref ?? null, utm_source ?? null, utm_medium ?? null, utm_campaign ?? null,
+      [site, day, visitor, hit.name, device(ua), ref ?? null, utm_source ?? null, utm_medium ?? null, utm_campaign ?? null,
         JSON.stringify(props)],
     );
   } catch (err) {
@@ -97,4 +97,73 @@ export async function loadHomeStats(days: number) {
   const filled = Array.from({ length: days }, (_, i) => new Date(today - (days - 1 - i) * 86_400_000).toISOString().slice(0, 10))
     .map((d) => daily.find((r) => r.day === d) ?? zero(d));
   return { daily: filled, funnel: funnel[0], refs, utms, devices, videos, joins, clicks, downloads, tries };
+}
+
+export interface EnDay {
+  day: string; visitors: number; views: number; en_views: number; es_views: number; translations: number; translated: number;
+  click_mac: number; click_windows: number; dl_mac: number; dl_windows: number;
+}
+
+/** english.ltd's dashboard (it reads this through /api/web-stats): the last `days` Beijing days, today included. */
+export async function loadEnglishStats(days: number) {
+  await ensureSchema();
+  const q = async <T>(sql: string) => (await db().query(sql, [EN_SITE, days])).rows as T[];
+  const W = `site = $1 AND day > (now() AT TIME ZONE 'Asia/Shanghai')::date - $2::int
+    AND (day, visitor) NOT IN (SELECT day, visitor FROM web_hits WHERE site = $1 AND utm_source = '${TEST_SOURCE}')`;
+  const BROWSER_DL = `name = 'download' AND props->>'client' = 'browser'`;
+  const [daily, funnel, pages, langs, refs, utms, devices, modes, limits, clicks, downloads] = await Promise.all([
+    q<EnDay>(`
+      SELECT to_char(day, 'YYYY-MM-DD') AS day,
+        count(DISTINCT visitor) FILTER (WHERE name = 'view')::int AS visitors,
+        count(*) FILTER (WHERE name = 'view')::int AS views,
+        count(*) FILTER (WHERE name = 'view' AND props->>'lang' = 'en')::int AS en_views,
+        count(*) FILTER (WHERE name = 'view' AND props->>'lang' = 'es')::int AS es_views,
+        count(*) FILTER (WHERE name = 'translate')::int AS translations,
+        count(DISTINCT visitor) FILTER (WHERE name = 'translate')::int AS translated,
+        count(*) FILTER (WHERE name = 'download_click' AND props->>'platform' = 'mac')::int AS click_mac,
+        count(*) FILTER (WHERE name = 'download_click' AND props->>'platform' = 'windows')::int AS click_windows,
+        count(*) FILTER (WHERE ${BROWSER_DL} AND props->>'platform' = 'mac')::int AS dl_mac,
+        count(*) FILTER (WHERE ${BROWSER_DL} AND props->>'platform' = 'windows')::int AS dl_windows
+      FROM web_hits WHERE ${W} GROUP BY day ORDER BY day`),
+    q<{ visitors: number; translated: number; clicked: number; downloaded: number }>(`
+      WITH v AS (
+        SELECT day, visitor, bool_or(name = 'view') AS viewed, bool_or(name = 'translate') AS translated,
+          bool_or(name = 'download_click') AS clicked, bool_or(${BROWSER_DL}) AS downloaded
+        FROM web_hits WHERE ${W} GROUP BY day, visitor)
+      SELECT count(*) FILTER (WHERE viewed)::int AS visitors,
+        count(*) FILTER (WHERE viewed AND translated)::int AS translated,
+        count(*) FILTER (WHERE viewed AND clicked)::int AS clicked,
+        count(*) FILTER (WHERE viewed AND downloaded)::int AS downloaded
+      FROM v`),
+    q<Label>(`SELECT coalesce(props->>'path', '?') AS label, count(*)::int AS n FROM web_hits
+      WHERE ${W} AND name = 'view' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 15`),
+    q<{ label: string; views: number; visitors: number }>(`SELECT coalesce(props->>'lang', '?') AS label, count(*)::int AS views,
+      count(DISTINCT (day, visitor))::int AS visitors FROM web_hits WHERE ${W} AND name = 'view' GROUP BY 1 ORDER BY 2 DESC`),
+    q<Label>(`SELECT coalesce(ref, '(direct)') AS label, count(*)::int AS n FROM web_hits
+      WHERE ${W} AND name = 'view' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10`),
+    q<Label>(`SELECT concat_ws(' / ', utm_source, utm_medium, utm_campaign) AS label, count(*)::int AS n FROM web_hits
+      WHERE ${W} AND name = 'view' AND utm_source IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10`),
+    q<Label>(`SELECT device AS label, count(DISTINCT (day, visitor))::int AS n FROM web_hits
+      WHERE ${W} AND name = 'view' GROUP BY 1 ORDER BY 2 DESC`),
+    q<{ mode: string; model: number; mock: number; limited: number; error: number }>(`
+      SELECT coalesce(props->>'mode', '?') AS mode,
+        count(*) FILTER (WHERE props->>'result' = 'model')::int AS model,
+        count(*) FILTER (WHERE props->>'result' = 'mock')::int AS mock,
+        count(*) FILTER (WHERE props->>'result' = 'limited')::int AS limited,
+        count(*) FILTER (WHERE props->>'result' = 'error')::int AS error
+      FROM web_hits WHERE ${W} AND name = 'translate' GROUP BY 1 ORDER BY 1`),
+    q<Label>(`SELECT coalesce(props->>'by', '?') AS label, count(*)::int AS n FROM web_hits
+      WHERE ${W} AND name = 'limit_hit' GROUP BY 1 ORDER BY 2 DESC`),
+    q<Label>(`SELECT props->>'platform' AS label, count(*)::int AS n FROM web_hits
+      WHERE ${W} AND name = 'download_click' GROUP BY 1 ORDER BY 2 DESC`),
+    q<{ platform: string; version: string; client: string; n: number }>(`
+      SELECT props->>'platform' AS platform, props->>'version' AS version, props->>'client' AS client, count(*)::int AS n
+      FROM web_hits WHERE ${W} AND name = 'download' GROUP BY 1, 2, 3 ORDER BY 1, 2 DESC, 3`),
+  ]);
+  const today = Date.parse(`${beijingDay()}T00:00:00Z`);
+  const zero = (day: string): EnDay => ({ day, visitors: 0, views: 0, en_views: 0, es_views: 0, translations: 0, translated: 0,
+    click_mac: 0, click_windows: 0, dl_mac: 0, dl_windows: 0 });
+  const filled = Array.from({ length: days }, (_, i) => new Date(today - (days - 1 - i) * 86_400_000).toISOString().slice(0, 10))
+    .map((d) => daily.find((r) => r.day === d) ?? zero(d));
+  return { days, daily: filled, funnel: funnel[0], pages, langs, refs, utms, devices, modes, limits, clicks, downloads };
 }
