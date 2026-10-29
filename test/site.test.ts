@@ -12,6 +12,7 @@ describe("homepage downloads", () => {
 
   it("finds the Mac installer next to the updater's zip", () => {
     expect(macPkgPath("0.2.6")).toBe("mac/0.2.6/YoudaoCopilotIME-0.2.6.pkg");
+    expect(macPkgPath("0.2.8")).toBe("mac/0.2.8/KeyLingo-Mac-0.2.8.pkg");
   });
 
   it("rounds sizes to MB and shows nothing when unknown", () => {

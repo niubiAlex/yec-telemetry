@@ -21,7 +21,9 @@ export interface Download {
   size: number | null;
 }
 
-export const macPkgPath = (version: string) => `mac/${version}/YoudaoCopilotIME-${version}.pkg`;
+/** Up to 0.2.7 the installer was uploaded as YoudaoCopilotIME-<v>.pkg; Blob names the saved file after the path. */
+export const macPkgPath = (version: string) =>
+  newer(version, "0.2.7") ? `mac/${version}/KeyLingo-Mac-${version}.pkg` : `mac/${version}/YoudaoCopilotIME-${version}.pkg`;
 
 /** The /dl/ path of a manifest URL on our domain or the Blob host, or null. */
 export function dlPath(url: string): string | null {
