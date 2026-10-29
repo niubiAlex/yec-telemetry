@@ -18,6 +18,9 @@
   --strong: #0e0f0c; --on-strong: #e8ebe6; --on-strong-head: #9fe870; --on-strong-body: #c7ccc3; --on-strong-sub: #c5edab;
   --on-strong-line: #5a5d57; --on-strong-chip: #262824;
   --strong-pill-bg: #9fe870; --strong-pill-fg: var(--ink); --strong-pill-hover: #cdffad;
+  --focus-on-strong: #38c8ff;
+  /* Download buttons on the strong band: fill, label, version line, hover and pressed fills */
+  --dl-bg: #9fe870; --dl-fg: var(--ink); --dl-sub: #2c3a22; --dl-hover: #cdffad; --dl-active: #8bd85c; --dl-active-fg: var(--ink); --dl-border: transparent;
   /* Footer */
   --foot-bg: #0e0f0c; --foot-fg: #c7ccc3; --foot-brand: #ffffff; --foot-head: #9fe870; --foot-link: #e8ebe6;
   --foot-line: #2a2c28; --foot-mute: #868685;
@@ -27,7 +30,7 @@
   color-scheme: light;
 }
 
-/* Youdao red, from the app (CardStyle.brand / settings palette): brand #e8374b on the logo tiles; #dc2f43 for fills
+/* Youdao red, from the app (CardStyle.brand / settings palette): brand #e8374b on the favicon; #dc2f43 for fills and the logo tiles
    with white text (4.6:1) and #c8243a for red text and hover (4.9:1+ on every light background used here). */
 :root[data-theme="youdao"] {
   --ink: #1f2329; --body: #4e5969; --mute: #646c78;
@@ -35,13 +38,15 @@
   --shadow: 0 1px 2px rgba(31, 35, 41, .06), 0 12px 32px rgba(31, 35, 41, .08);
   --accent: #dc2f43; --accent-hover: #c8243a; --on-accent: #ffffff;
   --accent-pale: #fdecee; --accent-ink: #c8243a; --link: #c8243a;
-  --logo-bg: #e8374b; --logo-fg: #ffffff;
+  --logo-bg: #dc2f43; --logo-fg: #ffffff;
   --icon-bg: #fdecee; --icon-fg: #c8243a;
   --badge-bg: #dc2f43; --badge-fg: #ffffff;
   --path-hover: #dc2f43; --field-focus: #dc2f43; --qr-border: #dc2f43;
   --strong: #dc2f43; --on-strong: #ffffff; --on-strong-head: #ffffff; --on-strong-body: #ffffff; --on-strong-sub: #ffffff;
   --on-strong-line: rgba(255, 255, 255, .7); --on-strong-chip: rgba(0, 0, 0, .14);
   --strong-pill-bg: #ffffff; --strong-pill-fg: #c8243a; --strong-pill-hover: #fdecee;
+  --focus: #0b57d0; --focus-on-strong: #ffffff;
+  --dl-bg: #ffffff; --dl-fg: #c8243a; --dl-sub: #4e5969; --dl-hover: #fdecee; --dl-active: #fce4e7; --dl-active-fg: #a51d30; --dl-border: #ffffff;
   --foot-bg: #1f2329; --foot-fg: #c9cdd4; --foot-brand: #ffffff; --foot-head: #ffffff; --foot-link: #e5e6eb;
   --foot-line: #343a42; --foot-mute: #a9aeb8;
 }
@@ -110,7 +115,9 @@ h3 { font-size: 20px; line-height: 1.4; font-weight: 700; margin-bottom: 6px; }
 .band.dark { background: var(--strong); color: var(--on-strong); }
 .band.dark h2 { color: var(--on-strong-head); }
 .band.dark .sub { color: var(--on-strong-body); }
-.band.dark a { color: var(--on-strong-head); }
+/* Zero specificity: buttons and cards inside the band keep their own colours. */
+:where(.band.dark) a { color: var(--on-strong-head); }
+.band.dark :focus-visible, .aud.aud-learn :focus-visible, .foot :focus-visible { outline-color: var(--focus-on-strong); }
 @media (max-width: 640px) { .band { padding: 56px 0; } .wrap { padding: 0 16px; } }
 
 /* Hero */
@@ -172,11 +179,12 @@ h3 { font-size: 20px; line-height: 1.4; font-weight: 700; margin-bottom: 6px; }
 .presets .chip:hover { background: var(--accent-pale); }
 .card { position: relative; border-radius: var(--r-lg); background: var(--canvas); border: 1px solid var(--line); box-shadow: var(--shadow);
   padding: 14px 16px; transition: opacity .15s; }
-.card.stale { opacity: .55; }
+.card.stale { border-style: dashed; }
 .badge { margin-left: auto; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: var(--body); }
 .out.wait, .out.msg { font-size: 16px; color: var(--mute); }
 .out.msg { color: var(--body); }
-.shimmer { animation: pulse 1.2s ease-in-out infinite; }
+.shimmer::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 10px; border-radius: 999px;
+  vertical-align: middle; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .45; } }
 .out mark { background: var(--accent-pale); color: inherit; border-bottom: 2px solid var(--accent); border-radius: 3px; padding: 0 2px; }
 .newword { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 10px 0 0; font-size: 14px; color: var(--body); }
@@ -292,10 +300,14 @@ kbd { font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; backgro
 .download .sub { margin: 0 auto 32px; }
 .dls { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .dl { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 260px; padding: 14px 28px;
-  border-radius: var(--r-xl); background: var(--strong-pill-bg); color: var(--strong-pill-fg); text-decoration: none; font-weight: 700; font-size: 17px; }
-.dl:hover { background: var(--strong-pill-hover); }
-.dl small { font-weight: 500; font-size: 13px; opacity: .75; }
-.dl.off { background: transparent; color: var(--on-strong); border: 1px solid var(--on-strong-line); }
+  border-radius: var(--r-xl); background: var(--dl-bg); color: var(--dl-fg); border: 2px solid var(--dl-border); text-decoration: none;
+  font-weight: 800; font-size: 17px; transition: background-color .15s, transform .05s; }
+.dl:hover { background: var(--dl-hover); }
+.dl:active { background: var(--dl-active); color: var(--dl-active-fg); transform: translateY(1px); }
+.dl small { font-weight: 500; font-size: 13px; color: var(--dl-sub); }
+.dl.off { background: transparent; color: var(--on-strong); border: 2px solid var(--on-strong-line); }
+.dl.off small { color: var(--on-strong-body); }
+.dl.off:hover, .dl.off:active { background: var(--on-strong-chip); }
 .reqs { margin: 24px auto 0; max-width: 640px; color: var(--on-strong-body); font-size: 14px; }
 .reqs p { margin: 4px 0; }
 
