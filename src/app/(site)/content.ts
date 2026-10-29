@@ -1,5 +1,5 @@
 // Copy for the public homepage (yec.askheadline.com/). Recruitment text is the
-// owner's 社群招募 copy, with the product named 有道 AI 输入法 throughout.
+// owner's 社群招募 copy, with the product named KeyLingo throughout.
 
 /**
  * The WeChat Work group QR, the only way to join. Group QRs expire after 7 days:
@@ -10,7 +10,7 @@ export const WECHAT_QR = "/home/wechat-qr.png";
 export const WECHAT_GROUP = "【输入法】内测群-2026.10";
 export const JOIN_CTA = "扫码进群，领取内测专属福利";
 
-export const PRODUCT = "有道 AI 输入法";
+export const PRODUCT = "KeyLingo";
 export const SLOGAN = "像老外一样打字";
 export const SLOGAN_EN = "Type like a native.";
 export const SLOGAN_LEARN = "一种神奇的学习方式";

@@ -110,7 +110,7 @@ export default async function Home() {
       <header className="top">
         <div className="topin">
           <a className="brand" href="/">
-            <span className="logo" aria-hidden="true">有</span>
+            <span className="logo" aria-hidden="true">K</span>
             {PRODUCT}
             <span className="beta">内测</span>
           </a>
@@ -321,8 +321,8 @@ export default async function Home() {
         <section className="band dark download" id="download">
           <div className="wrap">
             <span className="eyebrow">内测版</span>
-            <h2>下载{PRODUCT}</h2>
-            <p className="sub">安装后在系统的输入法列表里选「有道 AI 输入法」{renamed(mac, win) ? "" : "（当前版本在列表里暂时显示为「有道输入」）"}，跟着新手引导走一遍就好。之后有新版本，输入法里会提示更新。</p>
+            <h2>下载 {PRODUCT}</h2>
+            <p className="sub">安装后在系统的输入法列表里选「{PRODUCT}」{renamed(mac, win) ? "" : "（当前版本在列表里暂时显示为「有道 AI 输入法」）"}，跟着新手引导走一遍就好。之后有新版本，输入法里会提示更新。</p>
             <div className="dls">
               <DownloadButton d={mac} label="下载 Mac 版" platform="mac" />
               <DownloadButton d={win} label="下载 Windows 版" platform="windows" />
@@ -370,7 +370,7 @@ export default async function Home() {
               <ul>
                 <li>密码框里的输入，以及含 6 位以上连续数字、邮箱或网址的内容，一律不上传。</li>
                 <li>永远不收集窗口标题、网址、联系人、聊天对象和剪贴板内容。</li>
-                <li>只有{PRODUCT}团队里负责检查效果的少数成员能看到；不给第三方，不用于广告，也不用来训练模型。</li>
+                <li>只有 {PRODUCT} 团队里负责检查效果的少数成员能看到；不给第三方，不用于广告，也不用来训练模型。</li>
                 <li>每条最多保存 90 天，Beta 结束后全部删除。在「设置 → 隐私」里可以随时关掉，并删除已上传的内容。</li>
               </ul>
             </div>
@@ -395,7 +395,7 @@ export default async function Home() {
       <footer className="foot">
         <div className="footin">
           <div>
-            <a className="brand" href="/"><span className="logo" aria-hidden="true">有</span>{PRODUCT}</a>
+            <a className="brand" href="/"><span className="logo" aria-hidden="true">K</span>{PRODUCT}</a>
             <p style={{ maxWidth: 480 }}>{SLOGAN} · {SLOGAN_EN}<br />{SLOGAN_LEARN} · {SLOGAN_LEARN_EN}<br />内测版，欢迎扫码进群反馈。</p>
           </div>
           <nav aria-label="页脚导航">

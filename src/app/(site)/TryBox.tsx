@@ -169,7 +169,7 @@ export function TryBox() {
 
       <div className={`card${stale ? " stale" : ""}`} aria-live="polite">
         <div className="cardhead">
-          <span className="cardlogo" aria-hidden="true">有</span>
+          <span className="cardlogo" aria-hidden="true">K</span>
           <span className="en">English</span>
           {TONE_KEYS.map((t) => (
             <button key={t} type="button" className="tone" aria-pressed={t === tone} onClick={() => setTone(t)}>
@@ -191,7 +191,7 @@ export function TryBox() {
         )}
         {card.status === "limited" && (
           <p className="out msg">
-            今天的 {PER_DAY} 句免费体验用完了，明天再来，或者<a href="#download">下载{PRODUCT}</a>，在微信、邮件、文档里直接用。上面的例句仍然可以点。
+            今天的 {PER_DAY} 句免费体验用完了，明天再来，或者<a href="#download">下载 {PRODUCT}</a>，在微信、邮件、文档里直接用。上面的例句仍然可以点。
           </p>
         )}
         {card.status === "error" && <p className="out msg">暂时没连上翻译服务，稍后再试，或先点上面的例句看看。</p>}

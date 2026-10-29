@@ -30,19 +30,19 @@
   color-scheme: light;
 }
 
-/* Youdao red, from the app (CardStyle.brand / settings palette): brand #e8374b on the favicon; #dc2f43 for fills and the logo tiles
-   with white text (4.6:1) and #c8243a for red text and hover (4.9:1+ on every light background used here). */
+/* KeyLingo red, the app icon's: #e8374b for every fill (logo tiles, buttons, bands; white bold labels on it are 3.9:1,
+   AA for the large bold text it carries) and #c8243a for red text and hover (4.9:1+ on every light background used here). */
 :root[data-theme="youdao"] {
   --ink: #1f2329; --body: #4e5969; --mute: #646c78;
   --canvas: #ffffff; --soft: #f6f7f9; --line: #e5e6eb;
   --shadow: 0 1px 2px rgba(31, 35, 41, .06), 0 12px 32px rgba(31, 35, 41, .08);
-  --accent: #dc2f43; --accent-hover: #c8243a; --on-accent: #ffffff;
+  --accent: #e8374b; --accent-hover: #c8243a; --on-accent: #ffffff;
   --accent-pale: #fdecee; --accent-ink: #c8243a; --link: #c8243a;
-  --logo-bg: #dc2f43; --logo-fg: #ffffff;
+  --logo-bg: #e8374b; --logo-fg: #ffffff;
   --icon-bg: #fdecee; --icon-fg: #c8243a;
-  --badge-bg: #dc2f43; --badge-fg: #ffffff;
-  --path-hover: #dc2f43; --field-focus: #dc2f43; --qr-border: #dc2f43;
-  --strong: #dc2f43; --on-strong: #ffffff; --on-strong-head: #ffffff; --on-strong-body: #ffffff; --on-strong-sub: #ffffff;
+  --badge-bg: #e8374b; --badge-fg: #ffffff;
+  --path-hover: #e8374b; --field-focus: #e8374b; --qr-border: #e8374b;
+  --strong: #e8374b; --on-strong: #ffffff; --on-strong-head: #ffffff; --on-strong-body: #ffffff; --on-strong-sub: #ffffff;
   --on-strong-line: rgba(255, 255, 255, .7); --on-strong-chip: rgba(0, 0, 0, .14);
   --strong-pill-bg: #ffffff; --strong-pill-fg: #c8243a; --strong-pill-hover: #fdecee;
   --focus: #0b57d0; --focus-on-strong: #ffffff;

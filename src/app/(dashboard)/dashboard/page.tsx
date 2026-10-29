@@ -644,7 +644,7 @@ export default async function Page({ searchParams }: {
 
   return (
     <main>
-      <h1>有道输入 · Beta 指标 · {PRODUCTS[product]}{" "}
+      <h1>KeyLingo · Beta 指标 · {PRODUCTS[product]}{" "}
         <small className="more"><a href={product === "zh" ? "/users" : `/users?product=${product}`}>用户 →</a></small></h1>
       <p className="sub">
         上面是总览：每格是所选那一天的值，小柱是范围内每天（悬停看数值），点格子展开逐日表，「详情 ↓」跳到对应问题。匿名统计，只有计数、枚举和错误码。日期按北京时间。

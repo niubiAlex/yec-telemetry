@@ -73,7 +73,7 @@ export async function macDownload(): Promise<Download> {
 const macLink = (version: string, size: number | null): Download => ({
   version,
   href: `/dl/${macPkgPath(version)}`,
-  filename: `有道AI输入法-Mac-${version}.pkg`,
+  filename: `KeyLingo-Mac-${version}.pkg`,
   size,
 });
 
@@ -82,7 +82,7 @@ export async function windowsDownload(): Promise<Download | null> {
   if (!m) return null;
   const href = m.urls.map(dlPath).find((p): p is string => p !== null);
   if (!href) return null;
-  return { version: m.version, href, filename: `有道AI输入法-Windows-${m.version}.exe`, size: m.size };
+  return { version: m.version, href, filename: `KeyLingo-Windows-${m.version}.exe`, size: m.size };
 }
 
 export const megabytes = (n: number | null) => (n ? `${Math.round(n / 1e6)} MB` : "");
@@ -97,8 +97,8 @@ export function newer(a: string, b: string): boolean {
   return false;
 }
 
-/** The last releases whose input menu still says 「有道输入」; the next ones say 「有道 AI 输入法」. */
-export const LAST_OLD_NAME = { mac: "0.2.6", windows: "0.2.5" };
+/** The last releases whose input menu still says 「有道 AI 输入法」; the next ones say KeyLingo. */
+export const LAST_OLD_NAME = { mac: "0.2.7", windows: "0.2.7" };
 
 /** Whether both offered installers already carry the new name. */
 export const renamed = (mac: Download | null, win: Download | null) =>

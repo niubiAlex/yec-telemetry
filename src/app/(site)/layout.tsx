@@ -9,14 +9,22 @@ const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-int
 const THEME: "lime" | "youdao" = "youdao";
 const THEMES = {
   lime: { bar: "#e8ebe6", icon: "/home/icon.svg" },
-  youdao: { bar: "#f6f7f9", icon: "/home/icon-youdao.svg" },
+  youdao: { bar: "#f6f7f9", icon: "/home/icon-keylingo.svg" },
 } as const;
 
+const TITLE = "KeyLingo · 像老外一样打字 · 一种神奇的学习方式";
+const DESCRIPTION = "像老外一样打字：打中文直接出地道英文，闲聊、工作、学术三种说法任选。一种神奇的学习方式：照常打中文，看一眼英文卡片就学到新词。Mac 和 Windows 内测招募中，扫码进群领取内测专属福利。";
+
 export const metadata: Metadata = {
-  title: "有道 AI 输入法 · 像老外一样打字 · 一种神奇的学习方式",
-  description: "像老外一样打字：打中文直接出地道英文，闲聊、工作、学术三种说法任选。一种神奇的学习方式：照常打中文，看一眼英文卡片就学到新词。Mac 和 Windows 内测招募中，扫码进群领取内测专属福利。",
+  metadataBase: new URL("https://yec.askheadline.com"),
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: "KeyLingo",
   robots: { index: false, follow: false },
-  icons: { icon: THEMES[THEME].icon },
+  icons: { icon: [{ url: THEMES[THEME].icon, type: "image/svg+xml" }, { url: "/favicon.ico", sizes: "16x16 32x32 48x48" }], apple: "/home/apple-touch-icon.png" },
+  openGraph: { type: "website", siteName: "KeyLingo", title: TITLE, description: DESCRIPTION, url: "/", locale: "zh_CN",
+    images: [{ url: "/home/og.png", width: 1200, height: 630, alt: "KeyLingo" }] },
+  twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/home/og.png"] },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: THEMES[THEME].bar };

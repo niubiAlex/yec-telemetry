@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export const metadata = { title: "有道输入 · Beta 指标", robots: { index: false } };
+export const metadata = { title: "KeyLingo · Beta 指标", robots: { index: false } };
 
 const css = `
 :root { color-scheme: light dark; --ink:#1f2328; --muted:#656d76; --line:#d0d7de; --bar:#0969da; --bg:#fff; --card:#f6f8fa; --pend:#9a6700; --pendbg:#fff8c5; }
