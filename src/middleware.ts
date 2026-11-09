@@ -6,14 +6,18 @@ import { HIT_KEY_HEADER, STAFF_COOKIE, firstRequest, hitKey, hitSecret, isBot, p
 // endpoints (ingest, samples, 打字明细 upload, web events, homepage stats,
 // remote config, update manifests) and the token-checked admin endpoint
 // are not matched here. They only take data in; reading 打字明细 is the /users
-// pages, which stay behind it. The public homepage is `/` and its files
-// under /home/. Installer downloads (/dl/) pass through and are counted.
+// pages, which stay behind it. The public homepage `/` now redirects to
+// keylingo.youdao.com; its files under /home/ stay. Installer downloads
+// (/dl/) pass through and are counted.
 export const config = {
   matcher: ["/((?!api/events|api/samples|api/typing|api/web|api/hit|api/config|api/update|api/admin|api/try|home/|_next/static|_next/image|favicon.ico|icon.svg|robots.txt).*)"],
 };
 
 /** The dashboard used to live at `/`; these are its query parameters. */
 const DASHBOARD_PARAMS = ["product", "range", "platform", "active", "cohort", "day", "rc"];
+
+/** KeyLingo's official site, run by Youdao R&D since the handover. */
+const SITE = "https://keylingo.youdao.com/";
 
 export function middleware(req: NextRequest, event: NextFetchEvent) {
   const { pathname, searchParams } = req.nextUrl;
@@ -27,9 +31,7 @@ export function middleware(req: NextRequest, event: NextFetchEvent) {
       to.pathname = "/dashboard";
       return NextResponse.redirect(to, 308);
     }
-    const res = NextResponse.next();
-    res.headers.set("X-Robots-Tag", "noindex, nofollow");
-    return res;
+    return NextResponse.redirect(SITE, 308);
   }
 
   const password = process.env.DASHBOARD_PASSWORD;
