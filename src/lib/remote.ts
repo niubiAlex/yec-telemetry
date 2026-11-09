@@ -135,14 +135,21 @@ export interface Manifest {
   size: number;
   notes: string;
   published: string;
-  /** Only in `update-mac-dmg*`: R&D's DMG (KeyLingo.app + the IME), for clients from 0.2.8.1. */
-  format?: "dmg";
+  /**
+   * Only in `update-mac-dmg*`: R&D's package (KeyLingo.app + the IME), as a
+   * DMG or as their `KeyLingo.app.tar.gz` (`tgz`), for clients from 0.2.8.1.
+   */
+  format?: PackageFormat;
 }
 
+export const PACKAGE_FORMATS = ["dmg", "tgz"] as const;
+export type PackageFormat = (typeof PACKAGE_FORMATS)[number];
+
 /**
- * `dmg`: a manifest for `update-mac-dmg*`, which must say `"format":"dmg"`.
- * The zip manifests must not carry `format`: Mac clients up to 0.2.8 and every
- * Windows client ignore a manifest with a field they do not know.
+ * `dmg`: a manifest for `update-mac-dmg*`, which must say `"format":"dmg"` or
+ * `"format":"tgz"`. The zip manifests must not carry `format`: Mac clients up
+ * to 0.2.8 and every Windows client ignore a manifest with a field they do
+ * not know.
  */
 export function checkManifest(body: unknown, kind: "zip" | "dmg" = "zip"): Checked<Manifest> {
   const bad = (error: string): Checked<Manifest> => ({ ok: false, error });
@@ -150,7 +157,9 @@ export function checkManifest(body: unknown, kind: "zip" | "dmg" = "zip"): Check
   const fields = ["version", "urls", "sha256", "size", "notes", "published"];
   const u = onlyKeys(body, kind === "dmg" ? [...fields, "format"] : fields, "manifest");
   if (u) return bad(u);
-  if (kind === "dmg" && body.format !== "dmg") return bad("format must be dmg");
+  if (kind === "dmg" && !(PACKAGE_FORMATS as readonly unknown[]).includes(body.format)) {
+    return bad(`format must be ${PACKAGE_FORMATS.join(" or ")}`);
+  }
   if (typeof body.version !== "string" || !VERSION.test(body.version)) return bad("version");
   const { urls } = body;
   if (!Array.isArray(urls) || urls.length === 0 || urls.length > 4 || !urls.every(isHttps)) return bad("urls");
@@ -170,7 +179,17 @@ export function docName(kind: "config" | Platform, channel: string = "stable"): 
   return null;
 }
 
-/** `update-mac-dmg` / `update-mac-dmg-test`: what clients asking with `formats=dmg` get. */
+/**
+ * What a client gets: the package release only when it listed that format in
+ * `?formats=` and it is at least as new as the zip; otherwise the zip one.
+ */
+export function pickRelease(zip: Manifest | null, pkg: Manifest | null, formats: string | null): Manifest | null {
+  const wanted = (formats ?? "").split(",");
+  const usable = pkg?.format && wanted.includes(pkg.format) ? pkg : null;
+  return usable && (!zip || compareVersions(usable.version, zip.version) >= 0) ? usable : zip;
+}
+
+/** `update-mac-dmg` / `update-mac-dmg-test`: what clients asking with `formats=dmg` or `tgz` may get. */
 export function dmgDocName(platform: string, channel: string = "stable"): string | null {
   if (platform !== "mac") return null;
   if (channel === "stable") return "update-mac-dmg";

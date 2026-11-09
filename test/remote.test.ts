@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkConfig, checkDoc, checkManifest, compareVersions, dmgDocName, docName, forClient } from "../src/lib/remote";
+import { checkConfig, checkDoc, checkManifest, compareVersions, dmgDocName, docName, forClient, pickRelease, type Manifest } from "../src/lib/remote";
 
 const config = {
   schema: 1,
@@ -111,6 +111,29 @@ describe("documents", () => {
     expect(checkDoc("update-mac-dmg", { ...manifest, format: "zip" }).ok).toBe(false);
     expect(checkDoc("update-mac", dmg).ok).toBe(false);
     expect(checkDoc("update-windows", dmg).ok).toBe(false);
+    const tgz = { ...manifest, format: "tgz" };
+    expect(checkDoc("update-mac-dmg", tgz).ok).toBe(true);
+    expect(checkDoc("update-mac-dmg-test", { ...manifest, format: "pkg" }).ok).toBe(false);
+    expect(checkDoc("update-mac", tgz).ok).toBe(false);
+    expect(checkDoc("update-es-mac", tgz).ok).toBe(false);
+  });
+
+  it("serves a package only to clients that listed its format", () => {
+    const zip = { ...manifest, version: "0.2.8.1" } as Manifest;
+    const dmg = { ...manifest, version: "0.2.10", format: "dmg" } as Manifest;
+    const tgz = { ...manifest, version: "0.2.10", format: "tgz" } as Manifest;
+    expect(pickRelease(zip, tgz, null)).toBe(zip);
+    expect(pickRelease(zip, tgz, "dmg")).toBe(zip);
+    expect(pickRelease(zip, tgz, "dmg,tgz")).toBe(tgz);
+    expect(pickRelease(zip, tgz, "tgz")).toBe(tgz);
+    expect(pickRelease(zip, dmg, "dmg")).toBe(dmg);
+    expect(pickRelease(zip, dmg, "dmg,tgz")).toBe(dmg);
+    expect(pickRelease(zip, dmg, "tgz")).toBe(zip);
+    expect(pickRelease(zip, dmg, "dmgx")).toBe(zip);
+    expect(pickRelease({ ...zip, version: "0.2.11" }, tgz, "dmg,tgz")?.version).toBe("0.2.11");
+    expect(pickRelease(null, tgz, "dmg,tgz")).toBe(tgz);
+    expect(pickRelease(null, tgz, "dmg")).toBeNull();
+    expect(pickRelease(zip, null, "dmg,tgz")).toBe(zip);
   });
 
   it("compares versions as the clients do", () => {
