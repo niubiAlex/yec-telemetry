@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkConfig, checkDoc, checkManifest, docName, forClient } from "../src/lib/remote";
+import { checkConfig, checkDoc, checkManifest, compareVersions, dmgDocName, docName, forClient } from "../src/lib/remote";
 
 const config = {
   schema: 1,
@@ -98,5 +98,25 @@ describe("documents", () => {
     expect(docName("es-windows" as "mac", "test")).toBe("update-es-windows-test");
     expect(checkDoc("update-es-windows", manifest).ok).toBe(true);
     expect(checkDoc("update-es-linux", manifest).ok).toBe(false);
+  });
+
+  it("keeps the DMG manifest apart from the zip ones", () => {
+    const dmg = { ...manifest, format: "dmg" };
+    expect(dmgDocName("mac")).toBe("update-mac-dmg");
+    expect(dmgDocName("mac", "test")).toBe("update-mac-dmg-test");
+    expect(dmgDocName("windows")).toBeNull();
+    expect(dmgDocName("es-mac")).toBeNull();
+    expect(checkDoc("update-mac-dmg", dmg).ok).toBe(true);
+    expect(checkDoc("update-mac-dmg-test", manifest).ok).toBe(false);
+    expect(checkDoc("update-mac-dmg", { ...manifest, format: "zip" }).ok).toBe(false);
+    expect(checkDoc("update-mac", dmg).ok).toBe(false);
+    expect(checkDoc("update-windows", dmg).ok).toBe(false);
+  });
+
+  it("compares versions as the clients do", () => {
+    expect(compareVersions("0.2.9", "0.2.8.1")).toBe(1);
+    expect(compareVersions("0.2.8.1", "0.2.8")).toBe(1);
+    expect(compareVersions("0.2.8", "0.2.8.0")).toBe(0);
+    expect(compareVersions("0.2.10", "0.2.9")).toBe(1);
   });
 });
